@@ -1,7 +1,12 @@
+-- NOTE: views are dropped before creation on purpose. CREATE OR REPLACE VIEW
+-- refuses to change a view's column list and leaves the STALE view installed,
+-- which looks exactly like the new column silently not existing.
+
 -- The derived signals live HERE, not in any renderer.
 -- Grafana, a TUI and a future web archive are all thin clients over these.
 
-CREATE OR REPLACE VIEW v_live_lots AS
+DROP VIEW IF EXISTS v_live_lots CASCADE;
+CREATE VIEW v_live_lots AS
 SELECT
   p.id                                            AS plat_id,
   p.anchor                                        AS ticket,
@@ -13,11 +18,24 @@ SELECT
   l.attempt,
   now() - cur.started_at                          AS elapsed,
   now() - l.heartbeat_at                          AS since_heartbeat,
-  (now() - l.heartbeat_at) > interval '10 minutes' AS stale,
+  -- A flat threshold is wrong in both directions: a 95-minute indexing run is
+  -- healthy while a 12-minute review is probably wedged. So it is relative to
+  -- how long THIS phase usually takes for THIS repo, with a floor so a repo
+  -- with no history still gets a signal.
+  hist.median_s                                   AS typical_s,
+  (l.heartbeat_at IS NOT NULL
+   AND l.state NOT IN ('DONE','BLOCKED','PENDING','ABORTED')
+   AND (now() - l.heartbeat_at) > greatest(
+         interval '10 minutes',
+         make_interval(secs => coalesce(hist.median_s, 0) * 3)))  AS stale,
   l.attempt >= 2                                  AS retrying,
   l.attempt >= 3                                  AS last_chance,
   l.state = 'BLOCKED'                             AS needs_human,
-  (SELECT coalesce(sum(cost_usd), 0) FROM attempts WHERE lot_id = l.id) AS cost
+  (SELECT coalesce(sum(cost_usd), 0) FROM attempts WHERE lot_id = l.id) AS cost,
+  -- true when ANY attempt's cost was estimated rather than reported
+  (SELECT bool_or(cost_estimated) FROM attempts WHERE lot_id = l.id) AS cost_estimated,
+  (SELECT coalesce(sum(permission_denials), 0) FROM attempts
+     WHERE lot_id = l.id)                         AS permission_denials
 FROM lots l
 JOIN plats p ON p.id = l.plat_id
 LEFT JOIN LATERAL (
@@ -25,9 +43,18 @@ LEFT JOIN LATERAL (
   WHERE lot_id = l.id AND finished_at IS NULL
   ORDER BY started_at DESC LIMIT 1
 ) cur ON true
+LEFT JOIN LATERAL (
+  SELECT percentile_cont(0.5) WITHIN GROUP (
+           ORDER BY EXTRACT(EPOCH FROM (a.finished_at - a.started_at))) AS median_s
+  FROM attempts a
+  JOIN lots lh ON lh.id = a.lot_id
+  WHERE lh.repo = l.repo AND a.phase = cur.phase
+    AND a.finished_at IS NOT NULL AND a.provider <> 'supervisor'
+) hist ON true
 WHERE p.status NOT IN ('closed', 'aborted');
 
-CREATE OR REPLACE VIEW v_plat_summary AS
+DROP VIEW IF EXISTS v_plat_summary CASCADE;
+CREATE VIEW v_plat_summary AS
 SELECT
   p.id, p.anchor, p.title, p.status, p.budget_usd, p.started_at,
   count(l.id)                                           AS lots,
@@ -41,7 +68,8 @@ GROUP BY p.id;
 
 -- The decision tree, flattened with a depth so any renderer can indent it.
 -- Read it as narrative, top to bottom; that beats a node graph every time.
-CREATE OR REPLACE VIEW v_decision_tree AS
+DROP VIEW IF EXISTS v_decision_tree CASCADE;
+CREATE VIEW v_decision_tree AS
 WITH RECURSIVE t AS (
   SELECT d.*, 0 AS depth, ARRAY[d.id] AS path
   FROM decisions d WHERE d.parent_id IS NULL
@@ -68,7 +96,8 @@ CREATE TRIGGER trg_plat_notify_event AFTER INSERT ON events
 
 -- Delivered plats. This is also, not coincidentally, the row shape that
 -- work-items/INDEX.md wants: Tickets · Summary · Status · Started · Closed.
-CREATE OR REPLACE VIEW v_delivered_plats AS
+DROP VIEW IF EXISTS v_delivered_plats CASCADE;
+CREATE VIEW v_delivered_plats AS
 SELECT
   p.anchor, p.title, p.tickets AS roster, p.status,
   p.started_at::date AS started,

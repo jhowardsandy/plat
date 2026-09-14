@@ -5,10 +5,10 @@ decide() -> act -> ingest -> decide(). No LLM is ever asked what to do next.
 from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
-import subprocess
+import subprocess, threading
 
 from . import fsm, gates, ingest, prompts as P, roles as R, adapters
 from .config import Config
@@ -125,6 +125,41 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     return d.id
 
 
+class _Heartbeat:
+    """Tick lots.heartbeat_at while an agent runs.
+
+    Without this the column only moves either side of a subprocess that may run
+    for an hour, so "stale" -- the monitor's headline signal -- can never fire
+    during the one period it exists to cover. The thread uses its own session:
+    the caller's is not thread-safe.
+    """
+
+    def __init__(self, lot_id: int, every: float = 15.0):
+        self.lot_id, self.every = lot_id, every
+        self._stop = threading.Event()
+        self._t: threading.Thread | None = None
+
+    def _beat(self):
+        from .db import session as _s
+        while not self._stop.wait(self.every):
+            try:
+                with _s() as s2:
+                    s2.execute(update(Lot).where(Lot.id == self.lot_id)
+                               .values(heartbeat_at=datetime.now(timezone.utc)))
+            except Exception:
+                pass          # a missed beat must never take down the lot
+
+    def __enter__(self):
+        self._t = threading.Thread(target=self._beat, daemon=True)
+        self._t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._t:
+            self._t.join(timeout=2)
+
+
 def _worktree_fingerprint(wt: Path) -> str:
     """HEAD plus dirty state. A reviewer that changes either has overstepped."""
     def g(*a):
@@ -179,12 +214,16 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     log(f"  {nxt.phase}: {role.provider}/{role.model}{note} ...")
 
     before = _worktree_fingerprint(wt) if nxt.phase != "code" else None
-    res = adapters.run(role, pf, wt)
+    with _Heartbeat(lot.id):
+        res = adapters.run(role, pf, wt)
     a.exit_code = res.exit_code
     a.cost_usd = res.cost_usd
+    a.cost_estimated = res.cost_estimated
+    a.permission_denials = len(res.permission_denials)
     a.tokens_in, a.tokens_out = res.tokens_in, res.tokens_out
     a.finished_at = datetime.now(timezone.utc)
     lot.heartbeat_at = datetime.now(timezone.utc)
+    db.refresh(lot)          # the heartbeat thread moved it underneath us
     log(f"    exit={res.exit_code} {res.duration_s:.0f}s "
         f"${res.cost_usd:.2f}{'~' if res.cost_estimated else ''}")
 

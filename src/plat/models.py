@@ -75,6 +75,12 @@ class Attempt(Base):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    # Codex reports tokens, never dollars. A budget must never be enforced against
+    # a number that merely looks authoritative, so the estimate is marked as one.
+    cost_estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Non-zero means the agent was BLOCKED, not merely unproductive -- the failure
+    # that otherwise reads as "it did nothing useful". Persisted, not just logged.
+    permission_denials: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime] = _now()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

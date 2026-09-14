@@ -182,21 +182,51 @@ def reopen(anchor: str, lot: str, state: str = "CODING", note: str = ""):
 
 @app.command()
 def status(anchor: str = typer.Argument(None)):
-    """The monitor, as a table. v_live_lots, printed."""
-    with DB.session() as s:
-        q = select(Lot, Plat).join(Plat)
-        if anchor:
-            q = q.where(Plat.anchor == anchor)
-        t = Table(box=None, header_style="dim")
-        for col in ("ticket", "lot", "state", "att", "cost", "worktree"):
-            t.add_column(col)
-        for lot, p in s.execute(q).all():
-            cost = sum(a.cost_usd for a in
-                       s.scalars(select(Attempt).where(Attempt.lot_id == lot.id)).all())
-            colour = {"DONE": "green", "BLOCKED": "red"}.get(lot.state, "cyan")
-            t.add_row(p.anchor, lot.key, f"[{colour}]{lot.state}[/{colour}]",
-                      str(lot.attempt), f"${cost:.2f}", lot.worktree_path)
-        c.print(t)
+    """The monitor, as a table -- read straight from v_live_lots.
+
+    The derived signals live in SQL precisely so that every renderer stays thin.
+    Computing 'stale' here instead would put it out of step with Grafana.
+    """
+    from sqlalchemy import text
+    q = "SELECT * FROM v_live_lots"
+    if anchor:
+        q += " WHERE ticket = :a"
+    q += " ORDER BY ticket, lot"
+    with DB.engine().begin() as conn:
+        rows = conn.execute(text(q), {"a": anchor} if anchor else {}).mappings().all()
+    t = Table(box=None, header_style="dim")
+    for col in ("ticket", "lot", "state", "phase", "provider/model",
+                "att", "elapsed", "cost", "signal"):
+        t.add_column(col, justify="right" if col in ("att", "elapsed", "cost") else "left")
+    for r in rows:
+        sig = []
+        if r["stale"]:
+            typ = f" (typical {r['typical_s']:.0f}s)" if r["typical_s"] else ""
+            sig.append(f"[red]! stale {_hms(r['since_heartbeat'])}{typ}[/red]")
+        if r["needs_human"]:
+            sig.append("[red]|| needs you[/red]")
+        if r["last_chance"]:
+            sig.append("[red]last attempt[/red]")
+        elif r["retrying"]:
+            sig.append("[yellow]retry[/yellow]")
+        if r["permission_denials"]:
+            sig.append(f"[red]{r['permission_denials']} denial(s)[/red]")
+        colour = {"DONE": "green", "BLOCKED": "red"}.get(r["state"], "cyan")
+        t.add_row(r["ticket"], r["lot"], f"[{colour}]{r['state']}[/{colour}]",
+                  r["phase"] or "-", r["agent"] or "-", str(r["attempt"]),
+                  _hms(r["elapsed"]),
+                  f"${r['cost']:.2f}" + ("~" if r["cost_estimated"] else ""),
+                  " ".join(sig) or "[dim].[/dim]")
+    c.print(t)
+    if any(r["cost_estimated"] for r in rows):
+        c.print("[dim]~ cost estimated from tokens, not reported by the provider[/dim]")
+
+
+def _hms(td) -> str:
+    if td is None:
+        return "-"
+    s = int(td.total_seconds())
+    return f"{s // 60:02d}:{s % 60:02d}" if s < 3600 else f"{s // 3600}h{(s % 3600) // 60:02d}"
 
 
 @app.command()

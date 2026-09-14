@@ -32,9 +32,26 @@ def session() -> Session:
         s.close()
 
 
+ADDITIVE = [
+    "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS cost_estimated boolean DEFAULT false",
+    "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS permission_denials integer DEFAULT 0",
+    "ALTER TABLE lots ADD COLUMN IF NOT EXISTS base_ref varchar(64)",
+    "ALTER TABLE lots ADD COLUMN IF NOT EXISTS config jsonb DEFAULT \'{}\'::jsonb",
+]
+
+
 def init() -> list[str]:
-    """Create tables and (re)install the views. Idempotent; safe to re-run."""
+    """Create tables, apply additive columns, (re)install views. Idempotent.
+
+    ADDITIVE is a stopgap: create_all never alters an existing table, so a new
+    column would silently not exist on a database that predates it. It handles
+    added columns only -- a rename or a type change needs alembic, which is the
+    v1 answer.
+    """
     Base.metadata.create_all(engine())
+    with engine().begin() as c:
+        for stmt in ADDITIVE:
+            c.execute(text(stmt))
     sql = (Path(__file__).parent / "views.sql").read_text()
     done = []
     with engine().begin() as c:
