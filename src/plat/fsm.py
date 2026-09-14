@@ -120,10 +120,18 @@ class Ctx:
 # ---------------------------------------------------------------- predicates
 
 def gate_passed(gate: dict[str, Any] | None) -> bool:
-    """Invariant II. The supervisor ran this; the agent's opinion is not consulted."""
+    """Invariant II. The supervisor ran this; the agent's opinion is not consulted.
+
+    Pass/fail comes from the EXIT CODE, never from a parsed count. Counts are
+    best-effort text scraping and a bad parse once invented two failures in a
+    suite that exited 0, blocking a lot whose work was correct. A test runner's
+    exit status is unambiguous; its output format is not.
+    """
     if not gate:
         return False
-    return gate.get("tests_failed", 1) == 0 and gate.get("diff_files", 0) > 0
+    rc = gate.get("exit_code")
+    ok = (rc == 0) if rc is not None else (gate.get("tests_failed", 1) == 0)
+    return ok and gate.get("diff_files", 0) > 0
 
 
 def criteria_met(verdict: dict[str, Any] | None) -> bool:

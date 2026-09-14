@@ -9,8 +9,16 @@ import re, subprocess
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-PASSED = re.compile(r"(\d+)\s+passed")
-FAILED = re.compile(r"(\d+)\s+(?:failed|error)")
+# Anchor on a runner's SUMMARY line. Matching "(\d+) passed" anywhere in the blob
+# picked up vitest's "Test Files  85 passed" -- the file count, not the test count --
+# and "(\d+) (failed|error)" matched console noise, inventing failures in a suite
+# that exited 0.
+SUMMARY = re.compile(
+    r"^\s*(?:Tests|Test Suites)?\s*[:\s]\s*"
+    r"(?:(?P<p1>\d+)\s+passed|(?P<f1>\d+)\s+failed)", re.M)
+PASSED = re.compile(r"(?:^|\s)(\d+)\s+passed", re.M)
+FAILED = re.compile(r"(?:^|\s)(\d+)\s+(?:failed|errored)", re.M)
+TESTS_LINE = re.compile(r"^\s*Tests\s+(.+)$", re.M)
 
 
 @dataclass
@@ -72,9 +80,17 @@ def run(worktree: Path, test_cmd: str, base: str | None,
         probe_cmd: str | None = None, baseline_passed: int = 0) -> GateResult:
     p = _sh(test_cmd, worktree)
     blob = (p.stdout or "") + (p.stderr or "")
-    passed = int(m.group(1)) if (m := PASSED.search(blob)) else 0
-    failed = int(m.group(1)) if (m := FAILED.search(blob)) else 0
+    # Prefer a runner's own "Tests ..." summary; fall back to the LAST count in the
+    # output, since summaries come at the end and per-file chatter comes first.
+    scope = m.group(1) if (m := TESTS_LINE.search(blob)) else blob
+    pm, fm = PASSED.findall(scope), FAILED.findall(scope)
+    passed = int(pm[-1]) if pm else 0
+    failed = int(fm[-1]) if fm else 0
     counted = bool(passed or failed)
+    # The EXIT CODE is the ground truth for pass/fail; counts are for reporting and
+    # for a converge baseline. When they disagree, the counts are a parse artifact.
+    if p.returncode == 0 and failed:
+        failed = 0
     if not counted:
         # Unparseable runner -- a junit/json reporter writes counts to a file and
         # prints none. Fall back to the exit code, which is never ambiguous, but

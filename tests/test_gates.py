@@ -88,3 +88,64 @@ def test_converge_baseline_is_not_taken_from_an_uncounted_gate():
     from plat import cli
     src = inspect.getsource(cli.plan)
     assert "sm.tests_passed if sm.counted else 0" in src
+
+
+VITEST = """
+ ✓ src/a.test.tsx (6 tests) 12ms
+ ⚠️ No token available for request. 2 errors suppressed
+ Test Files  85 passed (85)
+      Tests  489 passed (489)
+   Duration  20.32s
+"""
+
+JEST = """
+Test Suites: 12 passed, 12 total
+Tests:       72 passed, 72 total
+"""
+
+
+def test_the_test_count_is_not_the_file_count(tmp_path):
+    """vitest prints 'Test Files 85 passed' BEFORE 'Tests 489 passed'. Taking the
+    first match reported 85 tests for a suite of 489."""
+    wt, base = repo(tmp_path, failing=False)
+    script = tmp_path / "fake.sh"
+    script.write_text("#!/bin/sh\ncat <<'EOT'\n" + VITEST + "EOT\nexit 0\n")
+    script.chmod(0o755)
+    g = gates.run(wt, str(script), base)
+    assert g.tests_passed == 489, f"read the file count instead: {g.tests_passed}"
+    assert g.tests_failed == 0, "console noise must not invent failures"
+
+
+def test_a_zero_exit_overrides_a_parsed_failure(tmp_path):
+    """Counts are scraped text; the exit code is unambiguous. When they disagree
+    the count is wrong — this blocked a correct lot for three attempts."""
+    wt, base = repo(tmp_path, failing=False)
+    script = tmp_path / "noisy.sh"
+    script.write_text("#!/bin/sh\necho 'saw 2 errors while warming up'\n"
+                      "echo '      Tests  400 passed (400)'\nexit 0\n")
+    script.chmod(0o755)
+    g = gates.run(wt, str(script), base)
+    assert g.tests_failed == 0
+    from plat.fsm import gate_passed
+    d = g.as_dict(); d["diff_files"] = 1
+    assert gate_passed(d), "a suite that exited 0 must pass the gate"
+
+
+def test_a_nonzero_exit_fails_even_with_no_parsed_failures(tmp_path):
+    wt, base = repo(tmp_path, failing=False)
+    script = tmp_path / "boom.sh"
+    script.write_text("#!/bin/sh\necho 'crashed before reporting'\nexit 1\n")
+    script.chmod(0o755)
+    g = gates.run(wt, str(script), base)
+    from plat.fsm import gate_passed
+    d = g.as_dict(); d["diff_files"] = 1
+    assert not gate_passed(d)
+
+
+def test_jest_style_summaries_still_parse(tmp_path):
+    wt, base = repo(tmp_path, failing=False)
+    script = tmp_path / "jest.sh"
+    script.write_text("#!/bin/sh\ncat <<'EOT'\n" + JEST + "EOT\nexit 0\n")
+    script.chmod(0o755)
+    g = gates.run(wt, str(script), base)
+    assert g.tests_passed == 72, f"got {g.tests_passed}"
