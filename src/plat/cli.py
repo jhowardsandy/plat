@@ -420,7 +420,14 @@ def top(anchor: str = typer.Argument(None),
     """The operator's view: drill-in, a live tail of the running agent, and keys
     that act. `plat status --watch` is the glanceable version; this is the one you
     sit in when something needs attention."""
-    from .tui import run as _run
+    try:
+        from .tui import run as _run
+    except ModuleNotFoundError as e:
+        c.print(f"[red]plat top needs {e.name}[/red], which is not in this install.")
+        c.print("  [dim]uv tool install --editable . --force[/dim]   "
+                "[dim](from tools/plat — a new dependency does not reach an "
+                "already-installed tool)[/dim]")
+        raise typer.Exit(1)
     _run(anchor, all_)
 
 

@@ -23,8 +23,15 @@ Read `README.md` first for the vocabulary (plat / lot / plat map / closing the t
 
 ## Testing ladder
 
-    uv run pytest              # L1 fsm properties + L2 contract/gate/splitter
+    uv run pytest              # L1 fsm properties + L2 contract/gate/splitter/tui
     uv run plat probe          # L3 does each real CLI honour the contract, and is it honest
+
+**After changing dependencies, reinstall the tool and smoke the real binary.**
+`uv run` uses the project venv; the user runs the installed tool, and a new
+dependency does NOT reach an already-installed one. `plat top` shipped broken
+this way with a green suite.
+
+    uv tool install --editable . --force && plat top --help
 
 L1 is the layer where a bug costs money rather than an error message — the FSM is
 walked exhaustively. Keep it that way.
