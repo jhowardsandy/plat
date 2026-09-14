@@ -16,6 +16,39 @@ app = typer.Typer(add_completion=False, help="Plat - one ticket, many lots, one 
 c = Console()
 
 
+def _resolve(s, anchor: str | None) -> Plat:
+    """Find the plat the user meant.
+
+    Bare `plat show` should do the obvious thing rather than error: with one plat
+    there is no ambiguity, and with several the most recently active is almost
+    always the one being asked about. A miss lists what exists instead of raising.
+    """
+    if anchor:
+        p = s.scalars(select(Plat).where(Plat.anchor == anchor)).first()
+        if p:
+            return p
+        have = s.scalars(select(Plat.anchor).order_by(Plat.id.desc()).limit(10)).all()
+        c.print(f"[red]no plat[/red] {anchor!r}")
+        if have:
+            c.print("  known: " + ", ".join(have))
+            c.print("  [dim]`plat history` lists delivered plats[/dim]")
+        else:
+            c.print("  [dim]none yet — `/plat-up <TICKET>` plans one[/dim]")
+        raise typer.Exit(1)
+
+    plats = s.scalars(select(Plat).order_by(Plat.id.desc())).all()
+    if not plats:
+        c.print("[dim]no plats yet — `/plat-up <TICKET>` plans one[/dim]")
+        raise typer.Exit(1)
+    # most recent decision wins; falls back to newest row when nothing has run
+    newest = s.scalars(select(Decision).order_by(Decision.ts.desc()).limit(1)).first()
+    chosen = next((p for p in plats if newest and p.id == newest.plat_id), plats[0])
+    if len(plats) > 1:
+        others = ", ".join(p.anchor for p in plats if p.id != chosen.id)
+        c.print(f"[dim]showing {chosen.anchor} (most recent). also: {others}[/dim]")
+    return chosen
+
+
 @app.command()
 def init():
     """Create the schema and install the views. Idempotent."""
@@ -178,7 +211,7 @@ def start(anchor: str):
     """Run the lots of a plat inline, to completion or to a human gate."""
     cfg = load(); roles_cfg = cfg.roles()
     with DB.session() as s:
-        p = s.scalars(select(Plat).where(Plat.anchor == anchor)).one()
+        p = _resolve(s, anchor)
         p.status = "running"
         for lot in s.scalars(select(Lot).where(Lot.plat_id == p.id)).all():
             if lot.state in (LotState.DONE.value, LotState.ABORTED.value):
@@ -199,8 +232,13 @@ def reopen(anchor: str, lot: str, state: str = "CODING", note: str = ""):
     """Put a lot back into play. Recorded as YOUR decision, with the reason."""
     from .decisions import record
     with DB.session() as s:
-        p = s.scalars(select(Plat).where(Plat.anchor == anchor)).one()
-        L = s.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).one()
+        p = _resolve(s, anchor)
+        L = s.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).first()
+        if L is None:
+            keys = s.scalars(select(Lot.key).where(Lot.plat_id == p.id)).all()
+            c.print(f"[red]no lot[/red] {lot!r} in {p.anchor}")
+            c.print("  lots: " + (", ".join(keys) or "(none)"))
+            raise typer.Exit(1)
         was = L.state
         record(s, plat_id=p.id, lot_id=L.id, actor="human", actor_detail="cli",
                kind="override", decision=f"reopened {was} -> {state}",
@@ -368,16 +406,26 @@ def history(limit: int = 25,
 
 
 @app.command()
-def show(anchor: str, lot: str = typer.Option(None)):
+def show(anchor: str = typer.Argument(None, help="defaults to the most recent plat"),
+         lot: str = typer.Option(None)):
     """The decision record for a plat or one lot."""
     with DB.session() as s:
-        p = s.scalars(select(Plat).where(Plat.anchor == anchor)).one()
+        p = _resolve(s, anchor)
         q = select(Decision).where(Decision.plat_id == p.id).order_by(Decision.id)
         if lot:
-            lid = s.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).one().id
-            q = q.where(Decision.lot_id == lid)
+            L = s.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).first()
+            if L is None:
+                keys = s.scalars(select(Lot.key).where(Lot.plat_id == p.id)).all()
+                c.print(f"[red]no lot[/red] {lot!r} in {p.anchor}")
+                c.print("  lots: " + (", ".join(keys) or "(none)"))
+                raise typer.Exit(1)
+            q = q.where(Decision.lot_id == L.id)
+        rows = s.scalars(q).all()
+        if not rows:
+            c.print(f"[dim]{p.anchor} has no decisions recorded yet[/dim]")
+            return
         style = {"system": "cyan", "agent": "yellow", "human": "red"}
-        for d in s.scalars(q).all():
+        for d in rows:
             col = style.get(d.actor, "white")
             c.print(f"[{col}]{d.actor:<7}[/{col}] [dim]{d.ts:%H:%M:%S} "
                     f"{d.actor_detail}[/dim]  {d.decision}")
