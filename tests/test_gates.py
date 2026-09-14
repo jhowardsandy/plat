@@ -64,3 +64,27 @@ def test_captured_output_survives_rich_markup(capsys):
     con.print(hostile, markup=False, highlight=False)
     out = capsys.readouterr().out
     assert "financial-reconciliation" in out and "12 failed" in out
+
+
+def test_an_unreadable_reporter_is_not_reported_as_zero_tests(tmp_path):
+    """vitest --reporter=junit writes counts to a file and prints a coverage table.
+    Parsing 0 and calling it 0 passed makes a measured green suite and an empty
+    one indistinguishable — and both look like success."""
+    wt, base = repo(tmp_path, failing=False)
+    g = gates.run(wt, "echo 'coverage table, no counts here'", base)
+    assert g.exit_code == 0
+    assert g.counted is False, "must record that the numbers are unknown"
+
+
+def test_a_readable_reporter_is_counted(tmp_path):
+    wt, base = repo(tmp_path, failing=False)
+    g = gates.run(wt, CMD, base)
+    assert g.counted is True and g.tests_passed == 1
+
+
+def test_converge_baseline_is_not_taken_from_an_uncounted_gate():
+    """Guarding a metric with a baseline of 0 guards nothing."""
+    import inspect
+    from plat import cli
+    src = inspect.getsource(cli.plan)
+    assert "sm.tests_passed if sm.counted else 0" in src

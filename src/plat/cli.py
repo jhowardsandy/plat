@@ -335,10 +335,18 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
                 if dry_run:
                     continue
                 raise typer.Exit(1)
-            c.print(f"  [green]gate smoke ok[/green] {sm.tests_passed} passed")
+            if sm.counted:
+                c.print(f"  [green]gate smoke ok[/green] {sm.tests_passed} passed")
+            else:
+                c.print("  [yellow]gate smoke ok, but no test counts could be read"
+                        "[/yellow] — exit code only.")
+                c.print("  [dim]a reporter that writes counts to a file (junit, json) "
+                        "prints none. This gate cannot tell a green suite from an "
+                        "empty one; use a reporter that prints, e.g. "
+                        "`--reporter=default`.[/dim]")
             # The smoke run's passing count is the floor a converge lot may never
             # fall below; without it, deleting tests reads as progress.
-            gate_cfg = {**g, "baseline_passed": sm.tests_passed}
+            gate_cfg = {**g, "baseline_passed": sm.tests_passed if sm.counted else 0}
             cfgd = {"gate": gate_cfg, "plan": L.get("plan", ""),
                     "phases": d.get("phases", ["code", "review"]),
                     "plat_map": d.get("plat_map", ""), "branch": branch,

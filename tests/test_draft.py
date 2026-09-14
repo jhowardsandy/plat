@@ -90,3 +90,13 @@ def test_a_planner_that_edited_a_repo_is_rejected():
     from plat import draft
     src = inspect.getsource(draft.run)
     assert "_dirty(" in src and "MODIFIED" in src
+
+
+def test_the_planner_is_told_commands_run_in_the_worktree():
+    """A draft once emitted `cd core/foo && pnpm test` as a verify command, which
+    would test the untouched original checkout rather than the agent's work."""
+    from pathlib import Path
+    from plat import prompts
+    t = (Path(prompts.PACKS) / "plan.md").read_text()
+    assert "INSIDE that lot's worktree" in t
+    assert "never begins with `cd <repo>`" in t

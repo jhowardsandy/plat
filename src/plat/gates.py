@@ -24,6 +24,10 @@ class GateResult:
     output_tail: str
     progress: float | None = None      # converge mode: what the probe measured
     baseline_passed: int = 0           # test count before the lot started
+    # False when the runner printed no counts we could read. The exit code is
+    # still a real signal, but "0 passed" would be a claim we cannot make -- and a
+    # suite with no tests must not look identical to one we simply could not parse.
+    counted: bool = True
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -70,8 +74,11 @@ def run(worktree: Path, test_cmd: str, base: str | None,
     blob = (p.stdout or "") + (p.stderr or "")
     passed = int(m.group(1)) if (m := PASSED.search(blob)) else 0
     failed = int(m.group(1)) if (m := FAILED.search(blob)) else 0
-    if not passed and not failed:
-        # unparseable runner: fall back to the exit code, which is never ambiguous
+    counted = bool(passed or failed)
+    if not counted:
+        # Unparseable runner -- a junit/json reporter writes counts to a file and
+        # prints none. Fall back to the exit code, which is never ambiguous, but
+        # record that the numbers are unknown rather than zero.
         failed = 0 if p.returncode == 0 else 1
     diff_files = 0
     if base:
@@ -79,4 +86,5 @@ def run(worktree: Path, test_cmd: str, base: str | None,
         diff_files = len([x for x in d.stdout.splitlines() if x.strip()])
     prog = probe(worktree, probe_cmd) if probe_cmd else None
     return GateResult(test_cmd, True, p.returncode, passed, failed, diff_files,
-                      blob[-1500:], progress=prog, baseline_passed=baseline_passed)
+                      blob[-1500:], progress=prog, baseline_passed=baseline_passed,
+                      counted=counted)

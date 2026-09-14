@@ -17,6 +17,15 @@ roles:
     # with `effort: max` is the experiment worth running -- untested here.
     effort: high
 
+  # The cost experiment from `planner`: same job, a tenth of the price, if the
+  # plan holds up. Use with `plat draft --role planner.fast`.
+  planner.fast:
+    provider: claude
+    model: sonnet
+    permission_mode: acceptEdits
+    allowed_tools: [Read, Glob, Grep, Bash, Write]
+    effort: max
+
   coder:
     provider: claude
     model: sonnet

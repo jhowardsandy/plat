@@ -34,6 +34,11 @@ If part of the suite is already failing on the base commit — integration or
 contract tests wanting a broker, a database, a network — **narrow the gate to what
 passes** and say in that lot's `plan` what the gate no longer covers.
 
+**Every command you write runs INSIDE that lot's worktree**, which is a fresh
+checkout of that one repo — not the workspace root. So a gate or verify command
+never begins with `cd <repo>`: doing that would test the original checkout, the one
+no agent has touched.
+
 **Acceptance criteria that can be checked.** Every criterion needs a `verify`
 command if a command can exist. "The UI feels responsive" is not a criterion; put
 it in the plat map as context. A criterion with no verify command is allowed, but
