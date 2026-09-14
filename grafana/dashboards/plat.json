@@ -848,7 +848,7 @@
     {
       "type": "table",
       "title": "Delivered plats \u2014 the ledger, generated",
-      "description": "v_delivered_plats is the row shape work-items/INDEX.md already has. roster_gap is the ledger's \u26a0 condition, as far as Plat can see it: a roster ticket never delivered as a plat of its own. It cannot see Jira status \u2014 /mlg-work-ledger still cross-checks that.",
+      "description": "v_delivered_plats is the row shape a work-tracking ledger wants. roster_gap is the ledger's \u26a0 condition, as far as Plat can see it: a roster ticket never delivered as a plat of its own. It cannot see your issue tracker's status; cross-check there.",
       "datasource": {
         "type": "postgres",
         "uid": "plat-pg"

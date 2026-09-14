@@ -112,8 +112,8 @@ phases: [code, review]        # v0 ships these two; docs/quality need their prov
 plat_map: |
   <the problem, the architecture, the contracts, what is out of scope>
 lots:
-  - key: docai-core
-    repo: core/docai-core
+  - key: my-service
+    repo: services/my-service
     depends_on: []
     gate:
       setup: "poetry install --no-interaction --no-root -q"
@@ -123,7 +123,7 @@ lots:
       ## Out of scope — do not touch
 criteria:
   - id: AC1
-    lot: docai-core
+    lot: my-service
     statement: "..."
     verify: "poetry run pytest -q -k ..."
 ```

@@ -10,10 +10,10 @@ $ plat status --watch
  plat  14:22:07   2 agent(s) live   $4.18   1 needs you
 
  ticket    lot                state      phase   provider/model       att  elapsed  cost    signal
- DEV-2551  docai-core         CODING     code    claude/sonnet          1    04:12  $0.81   ·
- DEV-2551  recorder-web       REVIEWING  review  codex/gpt-5.5          2    47:03  $2.40   ! stale 12:40  retry
- DEV-2551  common-deployments PENDING    —       —                      —        —      —   waits on docai-core
- DEV-2889  sor-service        BLOCKED    —       —                      1        —  $0.60   || needs you
+ DEV-2551  api-gateway        CODING     code    claude/sonnet          1    04:12  $0.81   ·
+ DEV-2551  web-console        REVIEWING  review  codex/gpt-5.5          2    47:03  $2.40   ! stale 12:40  retry
+ DEV-2551  deploy-manifests   PENDING    —       —                      —        —      —   waits on api-gateway
+ DEV-2889  billing-service    BLOCKED    —       —                      1        —  $0.60   || needs you
 ```
 
 ## Why it is shaped this way

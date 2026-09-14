@@ -11,8 +11,8 @@ plat_map: |
   (paste or point at the plat map; it is snapshotted into artifacts at plan time)
 
 lots:
-  - key: docai-core
-    repo: core/docai-core
+  - key: my-service
+    repo: services/my-service     # relative to workspace_root
     # base_ref: <sha>          # set for a SHADOW RUN against a delivered ticket
     gate:
       setup: "poetry install --no-interaction --no-root"   # fresh worktrees have no .venv

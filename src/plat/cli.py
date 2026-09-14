@@ -473,11 +473,12 @@ def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
 @app.command()
 def history(limit: int = 25,
             markdown: bool = typer.Option(False, "--markdown", "-m",
-                  help="emit rows for work-items/INDEX.md")):
+                  help="emit markdown rows for a work-tracking ledger")):
     """Delivered plats — the archive the live monitor deliberately hides.
 
-    Reads v_delivered_plats, which is the row shape work-items/INDEX.md already
-    uses. With --markdown it emits those rows ready to paste; "Where it stands"
+    Reads v_delivered_plats, whose columns are the row shape a work-tracking
+    ledger wants. With --markdown it emits those rows ready to paste; "Where it
+    stands"
     comes back as FACTS only, because the honest state — which env it is live in,
     what is held for sign-off — is a judgement Plat cannot make and you can.
     """

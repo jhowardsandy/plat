@@ -95,7 +95,7 @@ CREATE TRIGGER trg_plat_notify_event AFTER INSERT ON events
   FOR EACH ROW EXECUTE FUNCTION plat_notify_event();
 
 -- Delivered plats. This is also, not coincidentally, the row shape that
--- work-items/INDEX.md wants: Tickets · Summary · Status · Started · Closed.
+-- a work-tracking ledger wants: Tickets · Summary · Status · Started · Closed.
 DROP VIEW IF EXISTS v_delivered_plats CASCADE;
 CREATE VIEW v_delivered_plats AS
 SELECT
@@ -109,9 +109,9 @@ SELECT
      JOIN lots l3 ON l3.id = a.lot_id WHERE l3.plat_id = p.id)       AS findings,
   (SELECT coalesce(sum(a.cost_usd), 0) FROM attempts a
      JOIN lots l4 ON l4.id = a.lot_id WHERE l4.plat_id = p.id)       AS spend,
-  -- The ledger's warning condition, as far as Plat can see it: a roster ticket
-  -- that has never been delivered as a plat of its own. Plat does not know Jira
-  -- status -- /mlg-work-ledger cross-checks that. This is the local half.
+  -- The warning condition, as far as Plat can see it: a roster ticket that has
+  -- never been delivered as a plat of its own. Plat cannot see your issue
+  -- tracker's status; this is only the local half of that check.
   EXISTS (
     SELECT 1 FROM unnest(p.tickets) tk
     WHERE NOT EXISTS (
