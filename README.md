@@ -1,47 +1,97 @@
 # Plat
 
-One ticket is divided into numbered **lots**, worked in parallel by agents across
-repos, reviewed across models, and recorded as a single instrument. The survey has
-to **close** before any of it is official.
+**One ticket, divided into numbered lots, worked in parallel by agents across repos, reviewed by a different model than wrote it, and recorded as a single instrument.**
 
-| System concept | We call it |
-|---|---|
-| a run | a **plat** |
-| a unit of work | a **lot** |
-| master plan | the **plat map** |
-| per-repo plan | a **lot description** |
-| integration review | **closing the traverse** (a failure is an *error of closure*) |
-| prod readiness | **recording** |
-| final report | the **abstract** |
+Plat is a deterministic orchestrator for coding agents. You plan a ticket into *lots*; Plat runs each one through code → gate → review → fix, escalating models on retry, and stops at a human whenever it should. Every decision — by the system, by an agent, by you — is recorded and queryable long after the branch is gone.
 
-## Two invariants
+```
+$ plat status --watch
 
-1. **The control plane is JSON.** Narrative is Markdown, for humans and for the
-   next agent's context. Nothing routing-relevant is ever decided by reading prose.
-2. **Never trust self-reported success.** The supervisor runs tests, lint and the
-   diff check itself. `{"status":"complete"}` is an opinion.
+ plat  14:22:07   2 agent(s) live   $4.18   1 needs you
 
-## What Plat does and does not own
+ ticket    lot                state      phase   provider/model       att  elapsed  cost    signal
+ DEV-2551  docai-core         CODING     code    claude/sonnet          1    04:12  $0.81   ·
+ DEV-2551  recorder-web       REVIEWING  review  codex/gpt-5.5          2    47:03  $2.40   ! stale 12:40  retry
+ DEV-2551  common-deployments PENDING    —       —                      —        —      —   waits on docai-core
+ DEV-2889  sor-service        BLOCKED    —       —                      1        —  $0.60   || needs you
+```
 
-Plat owns **orchestration state**. The workspace owns **checkouts**.
-`lots.worktree_path` points into `<workspace>/.worktrees/<TICKET>/<repo>/`,
-created by the existing worktree convention. Plat never relocates a worktree.
+## Why it is shaped this way
+
+**Cross-model review is the point.** A model is systematically blind to its own failure modes and will rationalise its own code — it wrote that code because it believed it was right. A reviewer from a different lineage brings different priors. On Plat's first real run a coder reasoned its way into keeping an unsafe default, the tests passed, and the reviewer caught exactly that rationalisation. A same-model reviewer would likely have shared the blind spot.
+
+**Two invariants hold the rest up.**
+
+1. **The control plane is JSON.** Agents write narrative Markdown for humans and a strict JSON verdict for the machine. Nothing routing-relevant is ever decided by reading prose, so a run is deterministic, resumable and auditable.
+2. **Never trust self-reported success.** `{"status": "complete"}` is an agent's opinion. The supervisor runs the tests itself and checks the diff is non-empty. An agent that reports passing tests it never ran fails the gate.
+
+**No LLM sits in the routing seat.** The state machine is pure functions, exhaustively tested. What runs next is never a judgement call.
+
+## The vocabulary
+
+A **plat** divides one tract into numbered lots: independently developable, recorded together as a single instrument, and the survey has to *close* before any of it is official.
+
+| Concept | Called | Because |
+|---|---|---|
+| a run | a **plat** | one ticket, divided and recorded as one instrument |
+| a unit of work | a **lot** | independently workable, numbered, part of one whole |
+| the master plan | the **plat map** | the drawing every lot is cut from |
+| integration review | **closing the traverse** | a survey closes when the boundary calls return to origin; contracts that do not line up across repos are an **error of closure** |
+| production readiness | **recording** | preparing the instrument that makes it official |
+| the final report | the **abstract** | the compiled record of what happened |
 
 ## Install
 
-    docker compose -f ../../docker-compose.infra.yml up -d postgres redis
-    docker exec mlg-postgres psql -U postgres -c "CREATE DATABASE plat"
-    uv tool install --editable .     # puts `plat` on PATH; editable so edits land
-    plat init                        # tables, additive columns, views, roles.yaml
-    plat skills                      # links /plat-up and /plat-run into ~/.claude/skills
-    plat probe                       # L3: does each CLI honour the contract, and is it honest?
+Requires Python 3.12+, Postgres, Docker (for the dashboard), and at least one agent CLI.
 
-## Using it
+```bash
+uv tool install --editable .     # puts `plat` on PATH
+plat init                        # schema, views, config.toml, roles.yaml
+plat skills                      # links /plat-up and /plat-run into ~/.claude/skills
+plat probe                       # does each agent CLI honour the contract, and is it honest?
+```
 
-    /plat-up DEV-1234        # plan it: lots, plat map, checkable ACs, gate smoke
-    /plat-run DEV-1234       # run it: to DONE or to a human gate
+**[QUICKSTART.md](QUICKSTART.md)** takes you from nothing to a finished lot. **[docs/GUIDE.md](docs/GUIDE.md)** is the full reference.
 
-    plat status              # what is in flight
-    plat history             # what was delivered  (-m for ledger rows)
-    plat show DEV-1234       # the decision record
-    plat ui                  # Plat Room on :3033
+## Commands
+
+| | |
+|---|---|
+| `plat init` · `plat skills` · `plat probe` | set up and verify |
+| `plat plan <spec.yaml>` | cut worktrees, smoke the gate, stage the rows |
+| `plat start <anchor>` | run to completion or to a human gate |
+| `plat status [--watch]` · `plat top` | the monitor, glanceable or operable |
+| `plat show [anchor]` | the decision record |
+| `plat history [-m]` | delivered plats (`-m` for markdown ledger rows) |
+| `plat pause` · `plat reopen` | the control surface |
+| `plat ui` | the Grafana dashboard on :3033 |
+
+## Which models
+
+Roles map to providers in `~/.plat/roles.yaml`, so who does what is configuration:
+
+```yaml
+coder:
+  provider: claude
+  model: sonnet
+  resume_session: true            # attempt 2 resumes its own session; attempt 3 starts cold
+  escalate:
+    attempt_2: {model: opus}      # cheap first, expensive only on proven-hard work
+
+reviewer.correctness:
+  provider: codex                 # a different lineage sees what the author cannot
+  model: gpt-5.5
+  resume_session: false           # fresh eyes, every time
+```
+
+Adapters ship for **Claude Code**, **Codex** and **Gemini**. All three are driven headlessly behind one uniform contract, so swapping a role's provider is a config change.
+
+## Status
+
+Working and used in anger, but early. **v0** runs a single lot inline: `PENDING → CODING → GATE → REVIEWING → DONE | BLOCKED`, with session resume, model escalation, oscillation detection and budget ceilings.
+
+Not built yet: the Celery dispatcher and multi-lot DAG, closing the traverse, recording, and the abstract. See [docs/GUIDE.md](docs/GUIDE.md#what-is-not-built-yet).
+
+## Licence
+
+Not yet chosen — see the repository owner.

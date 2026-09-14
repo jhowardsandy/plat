@@ -54,7 +54,7 @@ Report failures with their output. If the gate failed, say so and show it. If a 
 
 Plat stops at the wall. It does **not** push, open an MR, transition a ticket, or touch any environment. Tell the user what is ready and let them decide.
 
-If the work is worth keeping, the normal path is: review the diff, push the branch, open the MR (push options work when `glab`'s token is expired — `-o merge_request.create -o merge_request.target=master`).
+If the work is worth keeping: review the diff yourself first — two models agreeing is not verification — then push the branch and open a pull request through whatever the project uses.
 
 ## Answering a blocked lot
 

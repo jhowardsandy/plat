@@ -1,7 +1,7 @@
 """The system of record. Disk is scratch; this is the plat.
 
-Every table here outlives the worktree it describes. `/mlg-worktree-down` must be
-able to delete a checkout without destroying any record of how the work was done.
+Every table here outlives the worktree it describes: deleting a checkout must
+never destroy the record of how the work in it was done.
 """
 from __future__ import annotations
 from datetime import datetime, timedelta

@@ -54,11 +54,21 @@ def init():
     """Create the schema and install the views. Idempotent."""
     for s in DB.init():
         c.print(f"  [dim]{s}[/dim]")
+    from .config import write_default_config, config_path
     cfg = load()
     if not cfg.roles_path.exists():
         shutil.copy(Path(__file__).parent / "roles.default.yaml", cfg.roles_path)
         c.print(f"[green]wrote[/green] {cfg.roles_path}")
-    c.print(f"[green]ready[/green]  db={cfg.database_url}  workspace={cfg.workspace_root}")
+    if not config_path().exists():
+        write_default_config()
+        c.print(f"[green]wrote[/green] {config_path()}  [dim]edit it to taste[/dim]")
+    c.print(f"[green]ready[/green]")
+    c.print(f"  db        {cfg.database_url.split('@')[-1]}")
+    c.print(f"  workspace {cfg.workspace_root}")
+    c.print(f"  worktrees {cfg.worktrees_root}")
+    if not cfg.workspace_root.exists():
+        c.print(f"  [yellow]workspace_root does not exist[/yellow] — set it in "
+                f"{config_path()} or $PLAT_WORKSPACE")
 
 
 @app.command()
@@ -493,7 +503,8 @@ def history(limit: int = 25,
             print(f"| {tickets} | {r['title']} | {r['status']} | {r['started']} "
                   f"| {r['closed']} | {facts} |")
         c.print("\n[dim]\"Where it stands\" is yours to write — these are facts, "
-                "not the honest state. Reconcile with /mlg-work-ledger.[/dim]")
+                "not the honest state (which environment it is live in, what is "
+                "held for sign-off). Plat cannot know that.[/dim]")
         return
 
     # 10 columns do not fit 80 chars; rich responds by ellipsising ALL of them.
@@ -517,7 +528,7 @@ def history(limit: int = 25,
     c.print(t)
     if any(r["roster_gap"] for r in rows):
         c.print("[dim]⚠ a roster ticket was never delivered as a plat of its own. "
-                "Plat cannot see Jira status — /mlg-work-ledger cross-checks that.[/dim]")
+                "Plat cannot see your issue tracker; cross-check there.[/dim]")
 
 
 @app.command()

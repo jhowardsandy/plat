@@ -1,30 +1,60 @@
-# Plat ships its own UI. It joins the existing mlg-infra network rather than
-# editing docker-compose.infra.yml, which is shared, untracked, and not ours.
+# Everything Plat needs, and nothing it does not.
+#
+#   docker compose -f docker-compose.plat.yml up -d              # Grafana only,
+#       against a Postgres you already run on the host (port 5432 by default).
+#
+#   docker compose -f docker-compose.plat.yml --profile db up -d # bring Postgres too,
+#       if you do not have one. Publishes 5432; override PLAT_DB_PORT if that clashes.
+#
+# `plat ui` runs the first form for you.
 services:
   grafana:
     image: grafana/grafana:11.3.0
     container_name: plat-grafana
     ports:
-      - "3033:3000"          # 3000 is recorder-web, 8085/8081/5555 are taken
+      - "${PLAT_GRAFANA_PORT:-3033}:3000"
     environment:
-      # localhost-only, read-only over one database: a login form would be friction
-      # with no security benefit. Do not reuse this posture if it ever leaves the box.
+      # Localhost-only, read-only over one database: a login form would be
+      # friction with no security benefit. Do NOT reuse this posture if this ever
+      # leaves the machine it runs on.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_USERS_DEFAULT_THEME: "system"
       GF_DASHBOARDS_MIN_REFRESH_INTERVAL: "5s"
-      GF_FEATURE_TOGGLES_ENABLE: "newDashboardSharingComponent"
+      # Read by grafana/provisioning/datasources/plat.yml
+      PLAT_DB_HOST: "${PLAT_DB_HOST:-host.docker.internal}"
+      PLAT_DB_PORT: "${PLAT_DB_PORT:-5432}"
+      PLAT_DB_NAME: "${PLAT_DB_NAME:-plat}"
+      PLAT_DB_USER: "${PLAT_DB_USER:-plat}"
+      PLAT_DB_PASSWORD: "${PLAT_DB_PASSWORD:-plat}"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - plat_grafana:/var/lib/grafana
-    networks: [mlg-infra]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"     # reach a host Postgres on Linux
+    restart: unless-stopped
+
+  postgres:
+    profiles: [db]
+    image: postgres:16-alpine
+    container_name: plat-postgres
+    environment:
+      POSTGRES_USER: "${PLAT_DB_USER:-plat}"
+      POSTGRES_PASSWORD: "${PLAT_DB_PASSWORD:-plat}"
+      POSTGRES_DB: "${PLAT_DB_NAME:-plat}"
+    ports:
+      - "${PLAT_DB_PORT:-5432}:5432"
+    volumes:
+      - plat_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PLAT_DB_USER:-plat}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
 volumes:
   plat_grafana:
-
-networks:
-  mlg-infra:
-    external: true
+  plat_pg:

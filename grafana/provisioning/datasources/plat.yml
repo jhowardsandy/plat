@@ -1,17 +1,18 @@
+# Values come from the environment (see docker-compose.plat.yml) so no credential
+# is committed and the same file works against any Postgres.
 apiVersion: 1
 datasources:
   - name: Plat
     uid: plat-pg
     type: postgres
     access: proxy
-    url: postgres:5432        # container hostname on mlg-infra
-    database: plat
-    user: postgres
+    url: $PLAT_DB_HOST:$PLAT_DB_PORT
+    database: $PLAT_DB_NAME
+    user: $PLAT_DB_USER
     secureJsonData:
-      password: mlgdev        # local dev infra credential, same as the compose file
+      password: $PLAT_DB_PASSWORD
     jsonData:
       sslmode: disable
       postgresVersion: 1600
-      timescaledb: false
     isDefault: true
     editable: false

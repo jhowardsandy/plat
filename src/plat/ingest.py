@@ -1,7 +1,7 @@
 """Write-through. Agents write files because they must; Postgres is the record.
 
 The moment a phase completes its artifacts are ingested, and disk becomes a cache
-you are free to delete -- which matters because `/mlg-worktree-down` will delete it.
+you are free to delete -- which matters, because tearing down a worktree does.
 """
 from __future__ import annotations
 import hashlib, json

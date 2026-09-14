@@ -7,7 +7,7 @@ description: Plan a ticket into a Plat — divide it into lots, write the plat m
 
 Turn a ticket into a runnable **plat**. This is the half of Plat that needs judgement; `/plat-run` is the half that must have none.
 
-Workspace root is `/Users/jhoward/development/mediciland/source` (`$ROOT`). The vault is `~/Documents/obsidian/MLG`.
+Read `~/.plat/config.toml` for `workspace_root` — that is `$ROOT` below, and worktrees resolve to `$ROOT/.worktrees/`. Never hardcode a path.
 
 > **The plan is the product.** A weak plat map buys six hours of confident, well-reviewed, thoroughly documented work on the wrong problem, and no amount of review rescues it. Spend the time here.
 
@@ -20,14 +20,7 @@ Workspace root is `/Users/jhoward/development/mediciland/source` (`$ROOT`). The 
 
 ### 1. Read the ticket
 
-Use `twg`, never the Atlassian MCP, and **always** `--select` — an unfiltered single-issue payload is ~90KB:
-
-```bash
-F=$(twg jira workitem get <TICKET> --output json \
-      --select "data.key,data.summary,data.description,data.status.name,data.issuelinks" \
-    2>/dev/null | grep -oE '"/[^"]*stdout\.json"' | tr -d '"')
-python3 -c "import json;d=json.load(open('$F'))['data'][0];print(d['key'],'|',d['status']['name'],'|',d['summary'])"
-```
+Pull it from whatever issue tracker is in use — a CLI if one is configured, otherwise ask the user to paste it. Prefer a CLI that can select fields: an unfiltered issue payload is often tens of kilobytes and reading it back costs more than the call it replaced.
 
 Identify the **roster**: the anchor, member tickets worked as one effort, and related tickets that are context only. Related tickets are never transitioned.
 
@@ -36,9 +29,10 @@ Identify the **roster**: the anchor, member tickets worked as one effort, and re
 Plat remembers. Before proposing anything, look at what reviewers have already found in the repos likely in scope:
 
 ```bash
-psql "postgresql://postgres:mlgdev@localhost:5432/plat" -c \
-  "SELECT anchor, repo, severity, fingerprint, claim FROM findings
-   WHERE repo IN ('core/docai-core') ORDER BY id DESC LIMIT 15"
+plat show                      # the most recent plat's decision record
+psql "$(python3 -c 'from plat.config import load; print(load().database_url.replace("+psycopg",""))')" -c \
+  "SELECT anchor, repo, severity, fingerprint, claim, resolved_in_attempt_id
+     FROM findings WHERE repo = '<repo>' ORDER BY id DESC LIMIT 15"
 ```
 
 Surface anything relevant to the user. A finding previously **dismissed** with a reason is the most valuable row there — it stops a reviewer re-raising something already settled.
@@ -74,24 +68,23 @@ An AC with no verify command is allowed, but flag it to the user: it will be jud
 | `[project]` + `[project.optional-dependencies]` (PEP 621 / hatchling) | `uv pip install -q -e '.[dev]'` | `uv run pytest -q` |
 | `package.json` instead | `pnpm install --frozen-lockfile` | `pnpm test` |
 
-`core/config-service` is the worked example of why: the inventory calls it "Python / Poetry", it is PEP 621 + hatchling, and `poetry install --no-root` installs no test dependencies at all — the gate failed with `Command not found: pytest`.
+A real example: a service documented as "Python / Poetry" was actually PEP 621 + hatchling. `poetry install --no-root` installed no test dependencies at all and the gate died with `Command not found: pytest`.
 
 Two more rules, both learned the same way:
 
 - **A fresh worktree has no `.venv`.** `setup` is never optional.
-- **The gate must be a subset that is already green on the base commit.** Run it yourself before accepting it. If the full suite is red on master — integration or contract tests needing a broker, a database, a VPN — narrow the gate to what genuinely passes and say so in the lot's `plan`. `config-service` is 12-red on master in `tests/contract`; gating on the whole suite would fail every attempt for a reason no agent can fix, burning all three and blocking the lot. Scoped to `tests/unit` it is 799 green.
+- **The gate must be a subset that is already green on the base commit.** Run it yourself before accepting it. If the full suite is red on master — integration or contract tests needing a broker, a database, a VPN — narrow the gate to what genuinely passes and say so in the lot's `plan`. One repo here is 12-red on main in `tests/contract` (it wants a pact broker); gating on the whole suite would fail every attempt for a reason no agent can fix, burning all three and blocking the lot. Scoped to `tests/unit` it is 799 green.
 
 A narrowed gate is a real reduction in assurance, so name it: record in the plat map what the gate does *not* cover, so the reviewer knows to look there rather than assuming the tests did.
 
-### 6. Write the plan into Obsidian
+### 6. Write the plan somewhere durable
 
-Plans live in the vault, never in a code repo:
+If the user keeps working notes outside their repos — a vault, a wiki, a docs folder — write the plan there and follow their existing layout. Otherwise put it next to the spec. What matters is that it is **not** committed into a code repo it describes.
 
 ```
-~/Documents/obsidian/MLG/work-items/<TICKET>/plans/
+<notes>/<TICKET>/plans/
   master.md          # the plat map
   <repo>.md          # one lot description per repo
-  INDEX.md           # links + as-built status
 ```
 
 `master.md` carries the roster in frontmatter so it never has to be reconstructed:
@@ -162,5 +155,5 @@ Tell the user it is ready and that `/plat-run <TICKET>` starts it. **Do not star
 ## Notes
 
 - Unticketed work uses a `<prefix>_<name>` anchor (`fix_`, `chore_`, `spike_`, `docs_`, `infra_`); Plat keeps that as the branch name verbatim. If it turns out to be worth tracking, open a ticket and re-anchor rather than merging a `prefix_` branch carrying real work.
-- Never commit vault content into a code repo.
+- Never commit planning notes into a code repo they describe.
 - If the repo root is dirty or behind `origin`, fix that first — a worktree cut from a stale base is the quiet start of cross-repo drift.

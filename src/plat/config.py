@@ -1,11 +1,56 @@
-"""Plat configuration. Everything machine-specific lives here, nothing is hardcoded."""
+"""Configuration. Nothing about one machine or one organisation is baked in.
+
+Resolution order, first hit wins:
+    1. environment  (PLAT_DATABASE_URL, PLAT_WORKSPACE, ...)
+    2. ~/.plat/config.toml, written by `plat init` on first run
+    3. the shipped defaults below
+
+The config file exists so that a working install is captured somewhere you can
+read and edit, rather than living in whichever shell happened to export the right
+variables.
+"""
 from __future__ import annotations
+
 import os
+import tomllib
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+
 import yaml
 
-DEFAULT_WORKSPACE = Path.home() / "development" / "mediciland" / "source"
+DEFAULTS = {
+    # A plain local Postgres. `docker compose -f docker-compose.plat.yml up -d`
+    # brings up exactly this if you do not already have one.
+    "database_url": "postgresql+psycopg://plat:plat@localhost:5432/plat",
+    "broker_url": "redis://localhost:6379/2",
+    # Where your repos live. Plat POINTS at worktrees under
+    # <workspace_root>/.worktrees/ ; it never creates or owns that directory.
+    "workspace_root": str(Path.home() / "src"),
+    "stale_after_s": 600,
+    "max_attempts": 3,
+}
+
+CONFIG_TEMPLATE = '''# plat configuration -- environment variables override every value here.
+
+# Postgres. `plat init` creates the schema; it does not create the database.
+database_url = "{database_url}"
+
+# Redis, for the Celery dispatcher (v1). Unused by the inline runner.
+broker_url = "{broker_url}"
+
+# The root your repositories live under. Plat resolves worktrees to
+# <workspace_root>/.worktrees/<ANCHOR>/<lot>/ and never owns that directory.
+workspace_root = "{workspace_root}"
+
+# A lot whose heartbeat has been cold longer than this is flagged stale --
+# but only as a FLOOR: the real threshold is relative to how long that phase
+# usually takes in that repo. See v_live_lots.
+stale_after_s = {stale_after_s}
+
+# Code -> review -> code cycles before a lot stops and asks for a human.
+max_attempts = {max_attempts}
+'''
 
 
 @dataclass(frozen=True)
@@ -14,8 +59,7 @@ class Config:
     database_url: str
     broker_url: str
     roles_path: Path
-    vault_root: Path | None
-    origin_id: str          # per-install UUID. keeps findings mergeable later.
+    origin_id: str          # per-install uuid; keeps findings mergeable across installs
     stale_after_s: int = 600
     max_attempts: int = 3
 
@@ -27,19 +71,51 @@ class Config:
         return yaml.safe_load(self.roles_path.read_text())
 
 
+def home() -> Path:
+    p = Path(os.environ.get("PLAT_HOME", Path.home() / ".plat"))
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def config_path() -> Path:
+    return home() / "config.toml"
+
+
+def write_default_config(**overrides) -> Path:
+    """Write config.toml if absent. Never overwrites an existing one."""
+    p = config_path()
+    if not p.exists():
+        p.write_text(CONFIG_TEMPLATE.format(**{**DEFAULTS, **overrides}))
+    return p
+
+
+def _file_values() -> dict:
+    p = config_path()
+    if not p.exists():
+        return {}
+    try:
+        return tomllib.loads(p.read_text())
+    except Exception:
+        return {}
+
+
 def load() -> Config:
-    home = Path(os.environ.get("PLAT_HOME", Path.home() / ".plat"))
-    home.mkdir(parents=True, exist_ok=True)
-    origin_file = home / "origin_id"
-    if not origin_file.exists():
-        import uuid
-        origin_file.write_text(str(uuid.uuid4()))
+    h = home()
+    f = _file_values()
+
+    def pick(key: str, env: str):
+        return os.environ.get(env) or f.get(key) or DEFAULTS[key]
+
+    origin = h / "origin_id"
+    if not origin.exists():
+        origin.write_text(str(uuid.uuid4()))
+
     return Config(
-        workspace_root=Path(os.environ.get("PLAT_WORKSPACE", DEFAULT_WORKSPACE)),
-        database_url=os.environ.get("PLAT_DATABASE_URL",
-            "postgresql+psycopg://postgres:mlgdev@localhost:5432/plat"),
-        broker_url=os.environ.get("PLAT_BROKER_URL", "redis://localhost:6379/2"),
-        roles_path=Path(os.environ.get("PLAT_ROLES", home / "roles.yaml")),
-        vault_root=Path(os.environ["PLAT_VAULT"]) if "PLAT_VAULT" in os.environ else None,
-        origin_id=origin_file.read_text().strip(),
+        workspace_root=Path(pick("workspace_root", "PLAT_WORKSPACE")).expanduser(),
+        database_url=str(pick("database_url", "PLAT_DATABASE_URL")),
+        broker_url=str(pick("broker_url", "PLAT_BROKER_URL")),
+        roles_path=Path(os.environ.get("PLAT_ROLES", h / "roles.yaml")),
+        origin_id=origin.read_text().strip(),
+        stale_after_s=int(pick("stale_after_s", "PLAT_STALE_AFTER_S")),
+        max_attempts=int(pick("max_attempts", "PLAT_MAX_ATTEMPTS")),
     )
