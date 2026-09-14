@@ -27,9 +27,21 @@ Plat owns **orchestration state**. The workspace owns **checkouts**.
 `lots.worktree_path` points into `<workspace>/.worktrees/<TICKET>/<repo>/`,
 created by the existing worktree convention. Plat never relocates a worktree.
 
-## Quick start
+## Install
 
     docker compose -f ../../docker-compose.infra.yml up -d postgres redis
-    uv run plat init          # create db, run migrations, install views
-    uv run plat seed          # fake plats in interesting states, for the monitor
-    uv run plat status
+    docker exec mlg-postgres psql -U postgres -c "CREATE DATABASE plat"
+    uv tool install --editable .     # puts `plat` on PATH; editable so edits land
+    plat init                        # tables, additive columns, views, roles.yaml
+    plat skills                      # links /plat-up and /plat-run into ~/.claude/skills
+    plat probe                       # L3: does each CLI honour the contract, and is it honest?
+
+## Using it
+
+    /plat-up DEV-1234        # plan it: lots, plat map, checkable ACs, gate smoke
+    /plat-run DEV-1234       # run it: to DONE or to a human gate
+
+    plat status              # what is in flight
+    plat history             # what was delivered  (-m for ledger rows)
+    plat show DEV-1234       # the decision record
+    plat ui                  # Plat Room on :3033

@@ -29,6 +29,36 @@ def init():
 
 
 @app.command()
+def skills(unlink: bool = typer.Option(False, "--unlink")):
+    """Link the plat skills into ~/.claude/skills/ so /plat-up and /plat-run work.
+
+    They are symlinks into the repo on purpose: the skills are versioned with the
+    code they drive, and editing one here takes effect immediately.
+    """
+    src = Path(__file__).resolve().parent.parent.parent / "skills"
+    dst = Path.home() / ".claude" / "skills"
+    dst.mkdir(parents=True, exist_ok=True)
+    for d in sorted(src.iterdir()):
+        if not d.is_dir():
+            continue
+        link = dst / d.name
+        if link.is_symlink() or link.exists():
+            if unlink:
+                link.unlink()
+                c.print(f"  [dim]unlinked[/dim] {d.name}")
+                continue
+            if link.resolve() == d.resolve():
+                c.print(f"  [dim]already linked[/dim] {d.name}")
+                continue
+            c.print(f"  [yellow]skipped[/yellow] {d.name} — a real directory is in the way")
+            continue
+        if unlink:
+            continue
+        link.symlink_to(d)
+        c.print(f"  [green]linked[/green] {d.name} -> {d}")
+
+
+@app.command()
 def probe(provider: str = typer.Option("all", help="claude | codex | all")):
     """L3 - does each CLI honour the termination contract, and is it honest?
 
