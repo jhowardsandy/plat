@@ -30,5 +30,6 @@ def bind(roles_cfg: dict, role_name: str, attempt: int,
         session_id=session_id if resume else None,
         timeout_s=int(spec.pop("timeout_s", defaults.get("timeout_s", 3600))),
         allowed_tools=spec.pop("allowed_tools", []) or [],
+        extra_dirs=spec.pop("extra_dirs", []) or [],
         extra=spec,
     )

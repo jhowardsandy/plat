@@ -14,6 +14,8 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
         "--permission-mode", role.permission_mode,
         "--add-dir", str(cwd),
     ]
+    for d in role.extra_dirs:
+        cmd += ["--add-dir", str(d)]
     if role.allowed_tools:
         cmd += ["--allowedTools", *role.allowed_tools]
     if role.session_id:

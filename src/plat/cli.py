@@ -230,6 +230,76 @@ def _probe_model(roles_cfg, prov):
 
 
 @app.command()
+def draft(
+    anchor: str = typer.Argument(..., help="DEV-1234, or fix_some-thing for unticketed work"),
+    ticket: Path = typer.Option(None, "--ticket", "-t",
+            help="file with the ticket text; '-' reads stdin"),
+    text_: str = typer.Option(None, "--text", help="the ticket text inline"),
+    role: str = typer.Option("planner"),
+    out: Path = typer.Option(None, "-o", help="where to write (default: .worktrees/<ANCHOR>.plat.yaml)"),
+):
+    """Draft a plat.yaml from a ticket. Read-only: it plans, it never runs.
+
+    Removes the typing and the reading, not the judgement — you edit the draft,
+    and `plat plan` still smoke-tests every gate before a token is spent.
+    """
+    import sys
+    from . import draft as _draft
+    cfg = load()
+    if text_:
+        body = text_
+    elif ticket and str(ticket) == "-":
+        body = sys.stdin.read()
+    elif ticket:
+        body = Path(ticket).read_text()
+    else:
+        c.print("[red]give the ticket[/red]: --ticket <file>, --ticket - , or --text \"...\"")
+        raise typer.Exit(2)
+
+    try:
+        with DB.session() as s:
+            path, spec, errs = _draft.run(s, cfg, anchor=anchor, ticket=body,
+                                          role_name=role, log=c.print)
+    except (_draft.DraftError, ingest.ContractError) as e:
+        c.print(f"[red]{e}[/red]")
+        raise typer.Exit(2)
+
+    if spec.get("needs_human"):
+        c.print("\n[yellow]the planner could not decompose this[/yellow]")
+        for q in spec.get("questions") or []:
+            c.print(f"  • {q}")
+        c.print(f"\n[dim]{path}[/dim]")
+        raise typer.Exit(3)
+
+    dest = Path(out) if out else cfg.worktrees_root / f"{anchor}.plat.yaml"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(path.read_text())
+
+    c.print(f"\n[bold]{spec.get('title','')}[/bold]")
+    for l in spec.get("lots") or []:
+        dep = f"  [dim]after {', '.join(l['depends_on'])}[/dim]" if l.get("depends_on") else ""
+        mode = "  [yellow]converge[/yellow]" if l.get("mode") == "converge" else ""
+        c.print(f"  [cyan]{l.get('key')}[/cyan]  {l.get('repo')}{mode}{dep}")
+        c.print(f"     [dim]{(l.get('gate') or {}).get('test','?')}[/dim]")
+    c.print(f"  [dim]budget ${spec.get('budget_usd', 0)}[/dim]")
+
+    weak = _draft.unverifiable(spec)
+    if weak:
+        c.print(f"\n[yellow]criteria with no verify command:[/yellow] {', '.join(weak)}")
+        c.print("  [dim]these cannot gate anything; they are judged on an agent's own "
+                "evidence[/dim]")
+    if errs:
+        c.print("\n[red]the draft will not plan as written:[/red]")
+        for e in errs:
+            c.print(f"  • {e}")
+    c.print(f"\n[green]wrote[/green] {dest}")
+    c.print(f"  [dim]reasoning: {path.parent / 'plan.md'}[/dim]")
+    c.print(f"  [bold]read it, fix it, then[/bold] plat plan {dest}")
+    if errs:
+        raise typer.Exit(1)
+
+
+@app.command()
 def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
     """Load a plat.yaml, materialise worktrees, smoke the gate, seed the rows."""
     cfg = load(); d = yaml.safe_load(spec.read_text())

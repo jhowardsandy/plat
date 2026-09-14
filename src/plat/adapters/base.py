@@ -21,6 +21,7 @@ class Role:
     session_id: str | None = None       # set to resume
     timeout_s: int = 3600
     allowed_tools: list[str] = field(default_factory=list)
+    extra_dirs: list[str] = field(default_factory=list)   # readable, not cwd
     extra: dict[str, Any] = field(default_factory=dict)
 
 

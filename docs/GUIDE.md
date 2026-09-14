@@ -107,6 +107,37 @@ A *regression* counts as no improvement, in whichever direction the objective po
 > count before the lot starts and stops the lot if it ever falls. Guard the metric
 > you optimise — this is the general lesson, not a detail about coverage.
 
+### Drafting a plat
+
+`plat draft DEV-1234 --ticket ticket.md` turns a ticket into a draft `plat.yaml`:
+it discovers the repos, reads them to work out which actually change and what each
+gate command is, writes checkable criteria, and explains its reasoning in `plan.md`.
+
+It **drafts**. You read it, edit it, and `plat plan` still smoke-tests every gate
+before a token is spent. A planner that ran its own plan would be the one change
+that makes a bad decomposition expensive instead of cheap.
+
+Two things it is allowed to say that matter more than a tidy decomposition:
+
+- `needs_human: true` with questions, when a ticket is too vague to split or needs
+  a decision that is not an agent's to make. An honest refusal beats a confident
+  decomposition of a problem nobody understood.
+- That the ticket's premise is wrong. On its first real run it corrected the ticket
+  twice — the environments named did not exist — and caught that the branch the
+  work depends on was unmerged, which would have wasted the run.
+
+> **Do not give the planner `permission_mode: plan`.** Plan mode blocks every write
+> including the draft it exists to produce, and it fails silently: exit 0, no
+> denials, no file. Writes are confined instead — the planner's cwd is its own
+> output directory, the workspace is added read-only, and the supervisor checks
+> afterwards that no repo it named came back dirty. Confine writes; never forbid
+> the one write you need.
+
+**Planning is not cheap.** The first real draft cost $7.85 and five minutes —
+more than either of the lots it was planning. That is defensible when it buys
+research you would otherwise do badly or skip, and indefensible for work you could
+scope from memory. Judge it per ticket.
+
 ## 5. Roles, providers and cost
 
 `~/.plat/roles.yaml` maps a role to a provider, model and permissions. The FSM knows only role *names*.

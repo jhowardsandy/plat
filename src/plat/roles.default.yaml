@@ -3,6 +3,17 @@ defaults:
   budget_usd_per_agent: 8
 
 roles:
+  planner:
+    provider: claude
+    model: opus
+    # NOT permission_mode: plan. Plan mode blocks every write including the draft
+    # the planner exists to produce, and it fails SILENTLY -- exit 0, no denials,
+    # no file. Confine the writes instead: the planner runs with its output
+    # directory as cwd and the workspace added read-only, and the supervisor
+    # checks afterwards that no repo it named came back dirty.
+    permission_mode: acceptEdits
+    allowed_tools: [Read, Glob, Grep, Bash, Write]
+
   coder:
     provider: claude
     model: sonnet
