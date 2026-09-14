@@ -134,7 +134,8 @@ def probe(provider: str = typer.Option("all", help="claude | codex | all")):
                 if res.error:
                     c.print(f"  [red]adapter error:[/red] {res.error}")
                 if res.stderr.strip():
-                    c.print(f"  [dim]stderr: {res.stderr.strip()[-400:]}[/dim]")
+                    c.print(res.stderr.strip()[-400:], markup=False,
+                            highlight=False, style="dim")
                 continue
             c.print("  [green]contract ok[/green] - both files written, schema valid")
             t = v.get("tests", {})
@@ -181,7 +182,10 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
             if not sm.ran or sm.exit_code != 0:
                 c.print(f"  [red]GATE SMOKE FAILED[/red] rc={sm.exit_code} - fix this "
                         f"before spending a token; every attempt would fail for this reason")
-                c.print(f"  [dim]{sm.output_tail[-400:]}[/dim]")
+                # markup=False is load-bearing: pytest node ids contain [brackets],
+                # which rich parses as tags and then swallows the whole line.
+                c.print(sm.output_tail[-900:], markup=False, highlight=False,
+                        style="dim")
                 if dry_run:
                     continue
                 raise typer.Exit(1)

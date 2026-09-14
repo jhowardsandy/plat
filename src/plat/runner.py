@@ -135,8 +135,9 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     cmd = (lot.config or {}).get("gate", {}).get("test", "true")
     a = Attempt(lot_id=lot.id, phase="gate", n=lot.attempt,
                 provider="supervisor", model="local", role_binding={})
-    db.add(a); db.flush()
-    log(f"  gate: {cmd}")
+    db.add(a)
+    db.commit()          # visible to the monitor NOW, not when the gate finishes
+    log(f"  gate: {cmd}")   # the command is ours; its OUTPUT never goes through log()
     g = gates.run(wt, cmd, lot.base_ref)
     a.exit_code = g.exit_code
     a.finished_at = datetime.now(timezone.utc)
@@ -238,7 +239,8 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     a = Attempt(lot_id=lot.id, phase=nxt.phase, n=lot.attempt,
                 provider=role.provider, model=role.model,
                 role_binding={"role": role.name, "resumed": bool(sid)})
-    db.add(a); db.flush()
+    db.add(a)
+    db.commit()          # an in-flight attempt must be visible while it is in flight
     note = " (resuming session)" if sid else ""
     log(f"  {nxt.phase}: {role.provider}/{role.model}{note} ...")
 

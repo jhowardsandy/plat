@@ -52,3 +52,15 @@ def test_smoke_detects_an_unrunnable_gate(tmp_path):
     wt, _ = repo(tmp_path, failing=False)
     g = gates.smoke(wt, "poetry run pytest -q")   # no poetry env here
     assert g.exit_code != 0, "an unrunnable gate must be caught before any agent runs"
+
+
+def test_captured_output_survives_rich_markup(capsys):
+    """pytest node ids contain [brackets]. Printed through rich's markup parser
+    they are read as tags and the line disappears — which is how a gate smoke
+    failure once reported nothing at all."""
+    from rich.console import Console
+    hostile = "FAILED tests/contract/test_p.py::test_x[financial-reconciliation] 12 failed"
+    con = Console(force_terminal=False, width=200)
+    con.print(hostile, markup=False, highlight=False)
+    out = capsys.readouterr().out
+    assert "financial-reconciliation" in out and "12 failed" in out

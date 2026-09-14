@@ -66,15 +66,22 @@ An AC with no verify command is allowed, but flag it to the user: it will be jud
 
 ### 5. Determine the gate command per lot
 
-Inspect each repo and pick the real command:
+**Do not infer the packaging from the presence of `pyproject.toml`.** Open it and read how dependencies are actually declared — the workspace inventory is not reliable here, and getting this wrong costs a whole run.
 
-| Shape | setup | test |
+| What you find in `pyproject.toml` | setup | test |
 |---|---|---|
-| `pyproject.toml` + `tests/` | `poetry install --no-interaction --no-root -q` | `poetry run pytest -q` |
-| `Makefile` with a test target | as above | `make test` |
-| `package.json` | `pnpm install --frozen-lockfile` | `pnpm test` |
+| `[tool.poetry.dependencies]` | `poetry install --no-interaction --no-root -q` | `poetry run pytest -q` |
+| `[project]` + `[project.optional-dependencies]` (PEP 621 / hatchling) | `uv pip install -q -e '.[dev]'` | `uv run pytest -q` |
+| `package.json` instead | `pnpm install --frozen-lockfile` | `pnpm test` |
 
-A fresh worktree has **no `.venv`**, so `setup` is not optional. `plat plan` runs this as a smoke test before any agent starts — a gate that cannot run fails every attempt and blocks the lot for reasons that have nothing to do with the code.
+`core/config-service` is the worked example of why: the inventory calls it "Python / Poetry", it is PEP 621 + hatchling, and `poetry install --no-root` installs no test dependencies at all — the gate failed with `Command not found: pytest`.
+
+Two more rules, both learned the same way:
+
+- **A fresh worktree has no `.venv`.** `setup` is never optional.
+- **The gate must be a subset that is already green on the base commit.** Run it yourself before accepting it. If the full suite is red on master — integration or contract tests needing a broker, a database, a VPN — narrow the gate to what genuinely passes and say so in the lot's `plan`. `config-service` is 12-red on master in `tests/contract`; gating on the whole suite would fail every attempt for a reason no agent can fix, burning all three and blocking the lot. Scoped to `tests/unit` it is 799 green.
+
+A narrowed gate is a real reduction in assurance, so name it: record in the plat map what the gate does *not* cover, so the reviewer knows to look there rather than assuming the tests did.
 
 ### 6. Write the plan into Obsidian
 

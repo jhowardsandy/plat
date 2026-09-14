@@ -49,3 +49,21 @@ def test_status_watch_is_opt_in_and_reuses_the_same_query():
     assert "_live_rows(" in watch_src and "_lots_table(" in watch_src
     status_src = inspect.getsource(cli.status)
     assert "_live_rows(" in status_src and "_lots_table(" in status_src
+
+
+def test_in_flight_attempts_are_committed_before_the_agent_spawns():
+    """flush() keeps the INSERT inside the transaction, so no other connection can
+    see it until commit — which is AFTER the agent finishes. The monitor then shows
+    no phase, no provider and no elapsed for the whole run, which is exactly the
+    window it exists to cover."""
+    import inspect
+    from plat import runner
+    for fn in (runner._run_agent, runner._run_gate):
+        src = inspect.getsource(fn)
+        add = src.index("db.add(a)")
+        spawn = src.index("adapters.run(" if fn is runner._run_agent else "gates.run(")
+        between = src[add:spawn]
+        assert "db.commit()" in between, (
+            f"{fn.__name__} must commit the attempt row before spawning, "
+            "or the run is invisible to every other process")
+        assert "db.flush()" not in between, "flush is not enough; it does not commit"
