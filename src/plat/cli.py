@@ -249,15 +249,7 @@ def reopen(anchor: str, lot: str, state: str = "CODING", note: str = ""):
         c.print(f"[green]{lot}[/green] {was} -> {state}")
 
 
-@app.command()
-def status(anchor: str = typer.Argument(None),
-           all_: bool = typer.Option(False, "--all", "-a",
-                 help="include closed plats (v_live_lots hides them)")):
-    """The monitor, as a table -- read straight from v_live_lots.
-
-    The derived signals live in SQL precisely so that every renderer stays thin.
-    Computing 'stale' here instead would put it out of step with Grafana.
-    """
+def _live_rows(anchor: str | None, all_: bool):
     from sqlalchemy import text
     # v_live_lots deliberately excludes closed plats -- a finished plat must leave
     # the monitor. --all reaches past that filter for when you want the whole board.
@@ -275,13 +267,17 @@ def status(anchor: str = typer.Argument(None),
         "SELECT * FROM v_live_lots"
     if anchor:
         q += (" WHERE p.anchor = :a" if all_ else " WHERE ticket = :a")
-    q += " ORDER BY ticket, lot" if not all_ else " ORDER BY p.anchor, l.key"
+    q += " ORDER BY p.anchor, l.key" if all_ else " ORDER BY needs_human DESC, stale DESC, ticket, lot"
     with DB.engine().begin() as conn:
-        rows = conn.execute(text(q), {"a": anchor} if anchor else {}).mappings().all()
-    t = Table(box=None, header_style="dim")
+        return conn.execute(text(q), {"a": anchor} if anchor else {}).mappings().all()
+
+
+def _lots_table(rows) -> Table:
+    t = Table(box=None, header_style="dim", expand=False)
     for col in ("ticket", "lot", "state", "phase", "provider/model",
                 "att", "elapsed", "cost", "signal"):
-        t.add_column(col, justify="right" if col in ("att", "elapsed", "cost") else "left")
+        t.add_column(col, justify="right" if col in ("att", "elapsed", "cost") else "left",
+                     no_wrap=True)
     for r in rows:
         sig = []
         if r["stale"]:
@@ -301,12 +297,85 @@ def status(anchor: str = typer.Argument(None),
                   _hms(r["elapsed"]),
                   f"${r['cost']:.2f}" + ("~" if r["cost_estimated"] else ""),
                   " ".join(sig) or "[dim].[/dim]")
-    c.print(t)
+    return t
+
+
+def _events(n: int = 8):
+    from sqlalchemy import text
+    with DB.engine().begin() as conn:
+        return conn.execute(text(
+            "SELECT to_char(ts,'HH24:MI:SS') AS at, kind, message "
+            "FROM events ORDER BY id DESC LIMIT :n"), {"n": n}).mappings().all()
+
+
+@app.command()
+def status(anchor: str = typer.Argument(None),
+           all_: bool = typer.Option(False, "--all", "-a",
+                 help="include closed plats (v_live_lots hides them)"),
+           watch: bool = typer.Option(False, "--watch", "-w",
+                 help="redraw until interrupted"),
+           interval: float = typer.Option(2.0, help="seconds between redraws")):
+    """The monitor, as a table -- read straight from v_live_lots.
+
+    The derived signals live in SQL precisely so that every renderer stays thin.
+    Computing 'stale' here instead would put it out of step with Grafana.
+    """
+    if watch:
+        _watch(anchor, all_, interval)
+        return
+    rows = _live_rows(anchor, all_)
+    c.print(_lots_table(rows))
     if not rows and not all_:
         c.print("[dim]nothing in flight. `plat status --all` includes closed plats, "
                 "`plat history` lists delivered ones.[/dim]")
     if any(r["cost_estimated"] for r in rows):
         c.print("[dim]~ cost estimated from tokens, not reported by the provider[/dim]")
+
+
+def _watch(anchor, all_, interval):
+    """Poll and redraw.
+
+    Polling rather than LISTEN/NOTIFY on purpose: the trigger exists and is the
+    right answer for a push consumer, but at a handful of rows a 2s poll is
+    indistinguishable and needs no second connection to keep alive.
+    """
+    import time
+    from datetime import datetime
+    from rich.live import Live
+    from rich.console import Group
+    from rich.panel import Panel
+
+    def frame():
+        rows = _live_rows(anchor, all_)
+        spend = sum(r["cost"] for r in rows)
+        live_n = sum(1 for r in rows if r["agent"] and
+                     r["state"] not in ("DONE", "BLOCKED", "PENDING", "ABORTED"))
+        blocked = sum(1 for r in rows if r["needs_human"])
+        stale = sum(1 for r in rows if r["stale"])
+        head = (f"[bold]plat[/bold]  {datetime.now():%H:%M:%S}   "
+                f"{live_n} agent(s) live   ${spend:.2f}")
+        if blocked:
+            head += f"   [red]{blocked} needs you[/red]"
+        if stale:
+            head += f"   [red]{stale} stale[/red]"
+        body = [head, "", _lots_table(rows)]
+        if not rows:
+            body.append("[dim]nothing in flight[/dim]")
+        ev = _events()
+        if ev:
+            body += ["", "[dim]events[/dim]"]
+            for e in reversed(ev):
+                body.append(f"[dim]{e['at']}[/dim]  {e['message'][:96]}")
+        return Panel(Group(*body), border_style="dim",
+                     title="[dim]ctrl-c to exit[/dim]", title_align="right")
+
+    try:
+        with Live(frame(), console=c, refresh_per_second=4, screen=False) as live:
+            while True:
+                time.sleep(interval)
+                live.update(frame())
+    except KeyboardInterrupt:
+        c.print("[dim]stopped[/dim]")
 
 
 def _hms(td) -> str:
