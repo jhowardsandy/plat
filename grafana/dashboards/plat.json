@@ -468,8 +468,7 @@
             },
             "filterable": true,
             "inspect": false
-          },
-          "noValue": "No plats running \u2014 nothing is in flight"
+          }
         },
         "overrides": [
           {

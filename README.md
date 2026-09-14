@@ -16,6 +16,12 @@ $ plat status --watch
  DEV-2889  billing-service    BLOCKED    —       —                      1        —  $0.60   || needs you
 ```
 
+And a dashboard, for reading rather than watching — `plat ui`:
+
+![The Plat Room dashboard: five lots in flight, one wedged, one waiting on a human, with the decision record beneath](docs/images/plat-room.jpg)
+
+*Seed that view yourself with `plat demo`, before you have run anything real.*
+
 ## Why it is shaped this way
 
 **Cross-model review is the point.** A model is systematically blind to its own failure modes and will rationalise its own code — it wrote that code because it believed it was right. A reviewer from a different lineage brings different priors. On Plat's first real run a coder reasoned its way into keeping an unsafe default, the tests passed, and the reviewer caught exactly that rationalisation. A same-model reviewer would likely have shared the blind spot.

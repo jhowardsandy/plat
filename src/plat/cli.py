@@ -102,6 +102,23 @@ def skills(unlink: bool = typer.Option(False, "--unlink")):
 
 
 @app.command()
+def demo(clear: bool = typer.Option(False, "--clear", help="remove the demo data")):
+    """Seed a demo plat: lots working, wedged, blocked, waiting and delivered.
+
+    For screenshots, and so a first `plat ui` is not an empty dashboard. Every row
+    is tagged origin_id="demo" and anchored DEMO-*, so --clear removes exactly this
+    and nothing of yours.
+    """
+    from . import demo as _demo
+    with DB.session() as s:
+        if clear:
+            c.print(f"[green]cleared[/green] {_demo.clear(s)} demo attempt(s)")
+            return
+        c.print(f"[green]{_demo.seed(s)}[/green]")
+        c.print("  [dim]plat status · plat top · plat ui   |   plat demo --clear to remove[/dim]")
+
+
+@app.command()
 def probe(provider: str = typer.Option("all", help="claude | codex | all")):
     """L3 - does each CLI honour the termination contract, and is it honest?
 
@@ -444,15 +461,28 @@ def top(anchor: str = typer.Argument(None),
 @app.command()
 def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
     """Bring up the Plat Room dashboard on http://localhost:3033 (read-only)."""
-    import subprocess, webbrowser, time
+    import os, subprocess, webbrowser, time
     root = Path(__file__).resolve().parent.parent.parent
     compose = root / "docker-compose.plat.yml"
     if stop:
         subprocess.run(["docker", "compose", "-f", str(compose), "down"], check=False)
         c.print("[dim]stopped[/dim]")
         return
+    # Hand the container the SAME database this install is configured against,
+    # derived from database_url. Otherwise the dashboard quietly points at
+    # whatever the compose defaults are and shows an empty board.
+    from urllib.parse import urlparse, unquote
+    u = urlparse(load().database_url.replace("+psycopg", ""))
+    host = u.hostname or "localhost"
+    env = {**os.environ,
+           # a container cannot reach the host as "localhost"
+           "PLAT_DB_HOST": "host.docker.internal" if host in ("localhost", "127.0.0.1") else host,
+           "PLAT_DB_PORT": str(u.port or 5432),
+           "PLAT_DB_NAME": (u.path or "/plat").lstrip("/") or "plat",
+           "PLAT_DB_USER": unquote(u.username or "plat"),
+           "PLAT_DB_PASSWORD": unquote(u.password or "plat")}
     r = subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         c.print(f"[red]compose failed[/red]\n{r.stderr[-600:]}")
         raise typer.Exit(1)
