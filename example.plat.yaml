@@ -1,0 +1,29 @@
+# One lot. This is the whole v0 surface.
+anchor: DEV-0000
+title: Example - a single lot end to end
+slug: example
+budget_usd: 15
+tickets: []
+related: []
+
+plat_map: |
+  ## Problem
+  (paste or point at the plat map; it is snapshotted into artifacts at plan time)
+
+lots:
+  - key: docai-core
+    repo: core/docai-core
+    # base_ref: <sha>          # set for a SHADOW RUN against a delivered ticket
+    gate:
+      setup: "poetry install --no-interaction --no-root"   # fresh worktrees have no .venv
+      test:  "poetry run pytest -q"
+    plan: |
+      ## Scope in this repo
+      ...
+      ## Out of scope
+      ...
+
+criteria:
+  - id: AC1
+    statement: "..."
+    verify: "poetry run pytest -q -k something"

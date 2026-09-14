@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["lot", "phase", "status", "summary", "tests", "acceptance_criteria"],
+  "additionalProperties": true,
+  "properties": {
+    "lot": {"type": "string"},
+    "phase": {"const": "code"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["complete", "partial", "blocked"]},
+    "summary": {"type": "string", "minLength": 1},
+    "changed_files": {"type": "array", "items": {"type": "string"}},
+    "commits": {"type": "array", "items": {"type": "string"}},
+    "tests": {
+      "type": "object", "required": ["cmd", "ran"],
+      "properties": {
+        "cmd": {"type": "string"}, "ran": {"type": "boolean"},
+        "passed": {"type": "integer"}, "failed": {"type": "integer"}
+      }
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "met"],
+        "properties": {"id": {"type": "string"}, "met": {"type": "boolean"},
+                       "evidence": {"type": "string"}}
+      }
+    },
+    "contracts_touched": {"type": "array", "items": {"type": "string"}},
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["choice", "alternatives", "rationale"],
+        "properties": {
+          "choice": {"type": "string"},
+          "alternatives": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "rationale": {"type": "string"},
+          "reversible": {"type": "boolean"}
+        }
+      }
+    },
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "needs_human": {"type": "boolean"}
+  }
+}

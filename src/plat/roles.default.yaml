@@ -1,0 +1,30 @@
+defaults:
+  timeout_s: 3600
+  budget_usd_per_agent: 8
+
+roles:
+  coder:
+    provider: claude
+    model: sonnet
+    permission_mode: acceptEdits
+    # a coder needs a shell for tests and git. The blast radius is one disposable,
+    # git-backed worktree; without this it burns a full attempt on denied tools.
+    allowed_tools: [Bash, Read, Write, Edit, Glob, Grep, TodoWrite]
+    resume_session: true            # attempt 2 resumes; fsm starts attempt 3 cold
+    queue: q.code
+    escalate:
+      attempt_2: {model: opus}      # cheap first, expensive only on proven-hard work
+      attempt_3: {model: opus}
+
+  reviewer.correctness:
+    provider: codex                 # a different lineage sees what the author cannot
+    model: gpt-5.5          # "default" lets the CLI choose; account reach varies
+    sandbox: read-only
+    resume_session: false           # fresh eyes, every time
+    queue: q.review
+
+  # v1+ -- unused by the v0 pipeline, which stops at review
+  documenter:        {provider: gemini, model: gemini-flash-latest, approval_mode: auto_edit}
+  reviewer.quality:  {provider: claude, model: opus}
+  closer:            {provider: claude, model: opus}
+  recorder:          {provider: claude, model: opus}
