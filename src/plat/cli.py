@@ -160,6 +160,7 @@ def start(anchor: str):
                 c.print(f"  [red]halted:[/red] {e}")
                 continue
             c.print(f"  [bold]{final}[/bold]")
+        runner.maybe_close_plat(s, p, log=c.print)
         c.print(f"\nspent ${runner.spent(s, p):.2f} of ${p.budget_usd:.2f}")
 
 
@@ -227,6 +228,35 @@ def _hms(td) -> str:
         return "-"
     s = int(td.total_seconds())
     return f"{s // 60:02d}:{s % 60:02d}" if s < 3600 else f"{s // 3600}h{(s % 3600) // 60:02d}"
+
+
+@app.command()
+def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
+    """Bring up the Plat Room dashboard on http://localhost:3033 (read-only)."""
+    import subprocess, webbrowser, time
+    root = Path(__file__).resolve().parent.parent.parent
+    compose = root / "docker-compose.plat.yml"
+    if stop:
+        subprocess.run(["docker", "compose", "-f", str(compose), "down"], check=False)
+        c.print("[dim]stopped[/dim]")
+        return
+    r = subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        c.print(f"[red]compose failed[/red]\n{r.stderr[-600:]}")
+        raise typer.Exit(1)
+    url = "http://localhost:3033/d/plat-room/plat-room"
+    for _ in range(40):
+        time.sleep(1)
+        h = subprocess.run(["curl", "-fsS", "http://localhost:3033/api/health"],
+                           capture_output=True, text=True)
+        if h.returncode == 0:
+            break
+    else:
+        c.print("[yellow]grafana did not report healthy in 40s; check `docker logs plat-grafana`[/yellow]")
+    c.print(f"[green]Plat Room[/green] {url}")
+    if open_browser:
+        webbrowser.open(url)
 
 
 @app.command()

@@ -1,0 +1,17 @@
+apiVersion: 1
+datasources:
+  - name: Plat
+    uid: plat-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432        # container hostname on mlg-infra
+    database: plat
+    user: postgres
+    secureJsonData:
+      password: mlgdev        # local dev infra credential, same as the compose file
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    isDefault: true
+    editable: false

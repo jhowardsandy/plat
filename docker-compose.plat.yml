@@ -1,0 +1,30 @@
+# Plat ships its own UI. It joins the existing mlg-infra network rather than
+# editing docker-compose.infra.yml, which is shared, untracked, and not ours.
+services:
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: plat-grafana
+    ports:
+      - "3033:3000"          # 3000 is recorder-web, 8085/8081/5555 are taken
+    environment:
+      # localhost-only, read-only over one database: a login form would be friction
+      # with no security benefit. Do not reuse this posture if it ever leaves the box.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: "system"
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: "5s"
+      GF_FEATURE_TOGGLES_ENABLE: "newDashboardSharingComponent"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - plat_grafana:/var/lib/grafana
+    networks: [mlg-infra]
+    restart: unless-stopped
+
+volumes:
+  plat_grafana:
+
+networks:
+  mlg-infra:
+    external: true

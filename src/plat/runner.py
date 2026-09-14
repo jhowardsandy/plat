@@ -99,6 +99,35 @@ def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
         parent = _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log)
 
 
+def maybe_close_plat(db: DbSession, plat: Plat, log=print) -> bool:
+    """Close a plat once every lot is terminal.
+
+    In v0 "closed" means exactly that: all lots DONE. v1 inserts closing the
+    traverse, recording and sign-off ahead of this, and a human makes the call.
+    Until then a finished plat must still leave the live view, or the monitor
+    fills up with work that ended days ago.
+    """
+    lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id)).all()
+    if not lots or any(l.state not in (LotState.DONE.value, LotState.ABORTED.value)
+                       for l in lots):
+        return False
+    if plat.closed_at is not None:
+        return False
+    done = sum(1 for l in lots if l.state == LotState.DONE.value)
+    record(db, plat_id=plat.id, actor="system", actor_detail="fsm.close_plat",
+           kind="transition",
+           decision=f"plat closed - {done}/{len(lots)} lots DONE",
+           rationale="every lot is terminal; v0 has no traverse or recording phase "
+                     "ahead of this, so closing is mechanical rather than a judgement",
+           inputs={"lots": len(lots), "done": done,
+                   "spent_usd": round(spent(db, plat), 2)})
+    plat.status = "closed"
+    plat.closed_at = datetime.now(timezone.utc)
+    db.commit()
+    log(f"  [bold green]plat closed[/bold green] ({done}/{len(lots)} lots)")
+    return True
+
+
 def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     lot.state = LotState.GATE.value
     db.commit()
