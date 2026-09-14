@@ -141,3 +141,80 @@ def test_anchor_column_fits_more_than_a_ticket_key():
     from plat.models import Plat, Finding
     assert Plat.__table__.c.anchor.type.length >= 160
     assert Finding.__table__.c.anchor.type.length >= 160
+
+
+# ---------------------------------------------------------------- converge mode
+from plat.fsm import Mode, parse_objective, improving   # noqa: E402
+import operator                                          # noqa: E402
+
+CONV = dict(deps_met=True, mode=Mode.CONVERGE, objective=">= 80")
+
+
+def _cg(passed=10, baseline=10, failed=0, files=3):
+    return {"tests_failed": failed, "diff_files": files,
+            "tests_passed": passed, "baseline_passed": baseline}
+
+
+def test_objective_direction_is_respected():
+    assert improving((40., 51.), operator.ge)          # coverage climbing
+    assert improving((40., 22.), operator.le)          # backlog falling
+    assert not improving((40., 22.), operator.ge)
+    assert not improving((58., 51.), operator.ge)      # a regression is not progress
+
+
+def test_reaching_the_objective_ends_the_loop():
+    n = decide(LotState.GATE, 3, Ctx(**CONV, gate=_cg(), progress=(51., 68., 81.)))
+    assert n.kind in ("agent", "close")
+    assert n.state in (LotState.REVIEWING, LotState.DONE)
+
+
+def test_progress_continues_the_loop_past_max_attempts():
+    """The whole point: a converge lot is not capped at 3."""
+    n = decide(LotState.GATE, 5, Ctx(**CONV, gate=_cg(), progress=(40., 51., 58., 66., 72.)))
+    assert n.state == LotState.CODING and n.attempt == 6 > MAX_ATTEMPTS
+
+
+def test_stalling_stops_and_asks():
+    n = decide(LotState.GATE, 4, Ctx(**CONV, gate=_cg(), progress=(60., 71., 71., 71.)))
+    assert n.kind == "human" and "no improvement" in n.reason
+
+
+def test_max_iterations_is_a_hard_ceiling():
+    n = decide(LotState.GATE, 8, Ctx(**CONV, gate=_cg(), progress=(10., 20., 30., 40.),
+                                     max_iterations=8))
+    assert n.kind == "human" and "iterations" in n.reason
+
+
+def test_deleting_tests_is_caught_as_gaming_not_progress():
+    """An agent told to raise coverage can do it by removing the tests that fail.
+    The number goes up, the suite stays green, and the metric is a lie."""
+    n = decide(LotState.GATE, 2, Ctx(**CONV, gate=_cg(passed=6, baseline=10),
+                                     progress=(50., 92.)))
+    assert n.kind == "human" and "gamed" in n.reason
+
+
+def test_a_probe_that_reads_nothing_stops_the_lot():
+    n = decide(LotState.GATE, 1, Ctx(**CONV, gate=_cg(), progress=()))
+    assert n.kind == "human" and "probe" in n.reason
+
+
+def test_converge_still_honours_the_gate():
+    n = decide(LotState.GATE, 1, Ctx(**CONV, gate=_cg(failed=2), progress=(50.,)))
+    assert n.state in (LotState.CODING, LotState.BLOCKED)
+    assert n.state != LotState.REVIEWING
+
+
+def test_objective_met_goes_TO_review_not_past_it():
+    """_after('review') returns the phase AFTER review, which skipped it entirely."""
+    n = decide(LotState.GATE, 3, Ctx(**CONV, gate=_cg(), progress=(51., 68., 81.),
+                                     phases=frozenset({"code", "review"})))
+    assert n.state == LotState.REVIEWING
+    full = frozenset({"code", "review", "docs", "quality"})
+    assert decide(LotState.GATE, 3, Ctx(**CONV, gate=_cg(), progress=(81.,),
+                                        phases=full)).state == LotState.REVIEWING
+
+
+def test_converge_with_review_disabled_closes_on_the_objective():
+    n = decide(LotState.GATE, 2, Ctx(**CONV, gate=_cg(), progress=(81.,),
+                                     phases=frozenset({"code"})))
+    assert n.kind == "close" and n.state == LotState.DONE

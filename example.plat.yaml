@@ -27,3 +27,34 @@ criteria:
   - id: AC1
     statement: "..."
     verify: "poetry run pytest -q -k something"
+
+# ---------------------------------------------------------------------------
+# A CONVERGE lot: the stopping condition is a measurement, not an attempt cap.
+#
+# Use it when the work is "chip away until X" rather than "make this change":
+# raising coverage, migrating N call sites, driving a lint or type-error count
+# to zero. A three-attempt cap abandons that kind of work half-done.
+#
+#   anchor: DEV-2000
+#   title: Get quota module coverage to 80%
+#   budget_usd: 40
+#   lots:
+#     - key: coverage
+#       repo: services/my-service
+#       mode: converge
+#       objective: ">= 80"          # >= <= > < ==   direction decides what counts
+#       patience: 2                 #   as improvement
+#       max_iterations: 8
+#       gate:
+#         setup: "uv pip install -q -e '.[dev]'"
+#         test:  "uv run pytest -q"
+#         # the LAST number the probe prints is the reading
+#         probe: "uv run pytest -q --cov=app/quota | awk '/TOTAL/{print $NF}'"
+#       plan: |
+#         ## Scope
+#         Tests only. Do not change app/quota.py to make it easier to cover.
+#
+# The supervisor records the passing-test count before the lot starts and stops
+# the lot if it ever falls. An agent told to raise coverage can do it by deleting
+# the tests that fail; the number goes up, the suite stays green, and the metric
+# is a lie. That is the one failure mode a converge loop invites.

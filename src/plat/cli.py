@@ -260,9 +260,24 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
                     continue
                 raise typer.Exit(1)
             c.print(f"  [green]gate smoke ok[/green] {sm.tests_passed} passed")
-            cfgd = {"gate": g, "plan": L.get("plan", ""),
+            # The smoke run's passing count is the floor a converge lot may never
+            # fall below; without it, deleting tests reads as progress.
+            gate_cfg = {**g, "baseline_passed": sm.tests_passed}
+            cfgd = {"gate": gate_cfg, "plan": L.get("plan", ""),
                     "phases": d.get("phases", ["code", "review"]),
-                    "plat_map": d.get("plat_map", ""), "branch": branch}
+                    "plat_map": d.get("plat_map", ""), "branch": branch,
+                    "mode": L.get("mode", "attempt")}
+            if cfgd["mode"] == "converge":
+                cfgd.update(objective=L["objective"],
+                            patience=L.get("patience", 2),
+                            max_iterations=L.get("max_iterations", 8))
+                if not g.get("probe"):
+                    c.print("  [red]a converge lot needs gate.probe[/red] — "
+                            "there is nothing to steer by")
+                    raise typer.Exit(1)
+                base_read = gates.probe(wt, g["probe"])
+                c.print(f"  [dim]baseline: probe reads {base_read}, "
+                        f"objective {L['objective']}, {sm.tests_passed} tests passing[/dim]")
             if lot is None:
                 lot = Lot(plat_id=p.id, key=L["key"], repo=L["repo"],
                           worktree_path=str(wt), state=LotState.PENDING.value,

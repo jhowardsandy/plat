@@ -44,7 +44,18 @@ def spent(db, plat) -> float:
     return sum(a.cost_usd for a in rows)
 
 
+def progress_history(db, lot) -> tuple[float, ...]:
+    """Every probe reading so far, oldest first. This is what steers a converge
+    lot -- both the prompt and the stop condition read it."""
+    rows = db.execute(select(Verdict.raw).join(Attempt, Attempt.id == Verdict.attempt_id)
+                      .where(Attempt.lot_id == lot.id, Attempt.phase == "gate")
+                      .order_by(Attempt.id)).all()
+    out = [r[0].get("progress") for r in rows]
+    return tuple(float(x) for x in out if x is not None)
+
+
 def build_ctx(db, plat, lot) -> fsm.Ctx:
+    cfg_l = lot.config or {}
     gate_a = _latest(db, lot, phases=["gate"])
     agent_a = _latest(db, lot, exclude=["gate"])
     prev = db.scalars(
@@ -57,6 +68,11 @@ def build_ctx(db, plat, lot) -> fsm.Ctx:
         gate=_verdict_of(db, gate_a),
         prev_fingerprints=frozenset(f.fingerprint for f in prev),
         heartbeat_at=lot.heartbeat_at,
+        mode=fsm.Mode(cfg_l.get("mode", "attempt")),
+        objective=cfg_l.get("objective"),
+        progress=progress_history(db, lot),
+        patience=int(cfg_l.get("patience", fsm.PATIENCE)),
+        max_iterations=int(cfg_l.get("max_iterations", fsm.MAX_ITERATIONS)),
         budget_exhausted=(plat.budget_usd > 0 and spent(db, plat) >= plat.budget_usd),
         paused=(plat.status == "paused"),
     )
@@ -134,23 +150,28 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     lot.state = LotState.GATE.value
     db.commit()
     wt = Path(lot.worktree_path)
-    cmd = (lot.config or {}).get("gate", {}).get("test", "true")
+    gcfg = (lot.config or {}).get("gate", {})
+    cmd = gcfg.get("test", "true")
     a = Attempt(lot_id=lot.id, phase="gate", n=lot.attempt,
                 provider="supervisor", model="local", role_binding={})
     db.add(a)
     db.commit()          # visible to the monitor NOW, not when the gate finishes
     log(f"  gate: {cmd}")   # the command is ours; its OUTPUT never goes through log()
-    g = gates.run(wt, cmd, lot.base_ref)
+    g = gates.run(wt, cmd, lot.base_ref, probe_cmd=gcfg.get("probe"),
+                  baseline_passed=int(gcfg.get("baseline_passed", 0)))
     a.exit_code = g.exit_code
     a.finished_at = datetime.now(timezone.utc)
     db.add(Verdict(attempt_id=a.id, raw=g.as_dict(),
                    tests_passed=g.tests_passed, tests_failed=g.tests_failed))
     ok = g.tests_failed == 0 and g.diff_files > 0
+    prog = f" · probe {g.progress}" if g.progress is not None else ""
+    if g.progress is not None:
+        log(f"  probe: {g.progress}")
     d = record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
                actor="system", actor_detail="gates.run", kind="transition",
-               decision=("gate passed - %d files, 0 failing" % g.diff_files) if ok
-                        else ("gate FAILED - %d failing, %d files changed"
-                              % (g.tests_failed, g.diff_files)),
+               decision=(("gate passed - %d files, 0 failing" % g.diff_files) if ok
+                         else ("gate FAILED - %d failing, %d files changed"
+                               % (g.tests_failed, g.diff_files))) + prog,
                rationale="the supervisor ran the tests; the agent's claim is not consulted",
                inputs=g.as_dict())
     db.commit()
@@ -230,6 +251,14 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
         prompt = P.build_code(lot, plat, wt, cfgl.get("branch", ""), lot.base_ref or "HEAD",
                               cfgl.get("plat_map", ""), cfgl.get("plan", ""), crit,
                               findings, cfgl.get("gate", {}).get("test", "true"), out)
+        if cfgl.get("mode") == "converge":
+            prompt = prompt.replace(
+                "## Rules",
+                P.converge_block(cfgl.get("objective", ""), progress_history(db, lot),
+                                 cfgl.get("gate", {}).get("probe", ""),
+                                 lot.attempt, int(cfgl.get("max_iterations",
+                                                           fsm.MAX_ITERATIONS)))
+                + "## Rules", 1)
     else:
         gate_a = _latest(db, lot, phases=["gate"])
         prompt = P.build_review(lot, plat, wt, lot.base_ref or "HEAD",

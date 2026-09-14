@@ -75,6 +75,38 @@ Reviewers are **never** resumed. Fresh eyes are the point.
 
 Every finding carries a `fingerprint`: a deterministic slug of file + rule + symbol. If the same fingerprint appears on a later attempt, the coder and reviewer are talking past each other and a third attempt will not fix it — the lot stops and asks for a human. Unbounded ping-pong is the most reliable way to spend several hundred dollars overnight and produce nothing.
 
+### Converge mode
+
+Some work is not "make this change" but "chip away until X": raise coverage,
+migrate the remaining call sites, drive a type-error count to zero. A three-attempt
+cap abandons that half-done, and no cap grinds forever on a stuck problem. So a
+converge lot stops on a **measurement**:
+
+```yaml
+mode: converge
+objective: ">= 80"        # >= <= > < ==  — direction decides what counts as progress
+patience: 2               # iterations without improvement before it asks for help
+max_iterations: 8         # hard ceiling regardless
+gate:
+  test:  "pytest -q"
+  probe: "pytest -q --cov=app/quota | awk '/TOTAL/{print $NF}'"
+```
+
+The probe runs as part of the gate and the **last number it prints** is the reading.
+Each iteration's coder sees the whole trail — `42 → 55 → 63` — so it continues the
+work rather than repeating the cheapest move it already made. It resumes its own
+session, because continuity is exactly what this shape needs.
+
+It stops when: the objective is met (then it is reviewed), progress stalls for
+`patience` iterations, `max_iterations` is reached, or the budget is exhausted.
+A *regression* counts as no improvement, in whichever direction the objective points.
+
+> **The failure mode a converge loop invites is gaming.** An agent told to raise
+> coverage can do it by deleting the tests that fail: the number goes up, the suite
+> stays green, and the metric is a lie. The supervisor records the passing-test
+> count before the lot starts and stops the lot if it ever falls. Guard the metric
+> you optimise — this is the general lesson, not a detail about coverage.
+
 ## 5. Roles, providers and cost
 
 `~/.plat/roles.yaml` maps a role to a provider, model and permissions. The FSM knows only role *names*.
@@ -176,6 +208,9 @@ plat probe         # L3 do the real CLIs honour the contract, and are they hones
 
 ## 10. What is not built yet
 
+- **Converge mode has never run against real agents.** The state machine is
+  exhaustively tested — objective direction, stalling, ceilings, gaming — but no
+  live lot has iterated yet.
 - **The Celery dispatcher and multi-lot DAG.** The design is a queue-backed graph with lots running in parallel; v0 runs one lot inline. `dispatch/` is behind an interface so the swap is contained.
 - **Closing the traverse, recording, the abstract.** The whole run-level join, including the cross-repo contract check.
 - **`docs` and `quality` phases.** Wired into the FSM and disabled by default; they need their providers.

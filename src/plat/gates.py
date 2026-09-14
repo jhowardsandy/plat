@@ -22,6 +22,8 @@ class GateResult:
     tests_failed: int
     diff_files: int
     output_tail: str
+    progress: float | None = None      # converge mode: what the probe measured
+    baseline_passed: int = 0           # test count before the lot started
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -47,7 +49,23 @@ def smoke(worktree: Path, test_cmd: str, setup_cmd: str | None = None) -> GateRe
     return run(worktree, test_cmd, base=None)
 
 
-def run(worktree: Path, test_cmd: str, base: str | None) -> GateResult:
+NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def probe(worktree: Path, cmd: str) -> float | None:
+    """Measure progress for a converge lot.
+
+    The command may print anything; the LAST number in its output is the reading.
+    That is deliberately forgiving -- `pytest --cov | awk '/TOTAL/{print $NF}'`
+    emits "78%", and demanding a bare float would make every probe a shell puzzle.
+    """
+    p = _sh(cmd, worktree)
+    nums = NUMBER.findall((p.stdout or "") + (p.stderr or ""))
+    return float(nums[-1]) if nums else None
+
+
+def run(worktree: Path, test_cmd: str, base: str | None,
+        probe_cmd: str | None = None, baseline_passed: int = 0) -> GateResult:
     p = _sh(test_cmd, worktree)
     blob = (p.stdout or "") + (p.stderr or "")
     passed = int(m.group(1)) if (m := PASSED.search(blob)) else 0
@@ -59,5 +77,6 @@ def run(worktree: Path, test_cmd: str, base: str | None) -> GateResult:
     if base:
         d = _sh(f"git diff --name-only {base}..HEAD", worktree)
         diff_files = len([x for x in d.stdout.splitlines() if x.strip()])
+    prog = probe(worktree, probe_cmd) if probe_cmd else None
     return GateResult(test_cmd, True, p.returncode, passed, failed, diff_files,
-                      blob[-1500:])
+                      blob[-1500:], progress=prog, baseline_passed=baseline_passed)

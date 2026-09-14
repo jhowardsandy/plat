@@ -42,6 +42,7 @@ Surface anything relevant to the user. A finding previously **dismissed** with a
 This is a conversation, not a form. Establish:
 
 - **What changes in which repo.** One lot per repo. If a repo needs two genuinely independent changes, that is two lots.
+- **Which shape each lot is.** Most are ordinary: make a change, review it, done. But if a lot is *"chip away until X"* — raise coverage, migrate the remaining call sites, drive a count to zero — it is a **converge** lot and needs `mode: converge`, an `objective`, and a `gate.probe` that prints a number. An attempt cap abandons that kind of work half-finished.
 - **Dependencies between lots.** Lot B needs A's contract? Record it in `depends_on`. Be sparse — a false dependency serialises work for no reason.
 - **The integration contracts** — Kafka topics, API shapes, env vars, feature flags, deployment pins. Anything crossing a repo boundary goes in the plat map where every lot can see it.
 - **What is explicitly out of scope**, per lot. Write it down. This is what stops an agent wandering into an adjacent repo.

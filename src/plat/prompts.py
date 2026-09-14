@@ -133,3 +133,33 @@ def build_review(lot, plat, wt, base, lot_desc, criteria, gate, out_dir,
             .replace("{gate}", g)
             .replace("{prior_art}", prior_art_block(prior))
             .replace("{termination}", termination(out_dir, "review")))
+
+
+def converge_block(objective: str, history, probe_cmd: str,
+                   iteration: int, max_iterations: int) -> str:
+    """Tell a converge coder where it stands. Without this each pass starts blind
+    and repeats the cheapest move it already made."""
+    trail = " → ".join(str(h) for h in history) if history else "(no reading yet)"
+    last = history[-1] if history else None
+    return f"""## This is a converge lot — iteration {iteration} of at most {max_iterations}
+
+**Objective:** the probe must read `{objective}`.
+
+    {probe_cmd}
+
+**Readings so far:** {trail}
+
+You are not expected to finish in one pass. Make real, verifiable progress toward
+the objective and stop; the next iteration continues from where you leave it, and
+you will see the new reading.
+
+The current reading is **{last}**. Two rules about it:
+
+- **Do not optimise the number.** The supervisor re-runs the tests itself and
+  stops the lot if the passing-test count falls, so removing or skipping awkward
+  tests is caught and treated as gaming, not progress.
+- If the objective looks unreachable, or the remaining work needs a decision that
+  is not yours, set `"needs_human": true` and say so. Stopping to ask beats eight
+  iterations of drift.
+
+"""
