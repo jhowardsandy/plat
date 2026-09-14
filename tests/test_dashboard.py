@@ -31,3 +31,11 @@ def test_panels_read_the_views_not_raw_tables():
     assert "v_live_lots" in joined and "v_decision_tree" in joined
     assert "v_delivered_plats" in joined
     assert "interval '10 minutes'" not in joined, "stale must come from the view"
+
+
+def test_cli_exposes_both_a_live_and_an_archive_view():
+    """v_live_lots hides closed plats on purpose, so the terminal needs a way
+    past that filter or a finished plat becomes unreachable from the CLI."""
+    from plat.cli import app
+    names = {c.name or c.callback.__name__ for c in app.registered_commands}
+    assert {"status", "history", "show"} <= names

@@ -182,17 +182,32 @@ def reopen(anchor: str, lot: str, state: str = "CODING", note: str = ""):
 
 
 @app.command()
-def status(anchor: str = typer.Argument(None)):
+def status(anchor: str = typer.Argument(None),
+           all_: bool = typer.Option(False, "--all", "-a",
+                 help="include closed plats (v_live_lots hides them)")):
     """The monitor, as a table -- read straight from v_live_lots.
 
     The derived signals live in SQL precisely so that every renderer stays thin.
     Computing 'stale' here instead would put it out of step with Grafana.
     """
     from sqlalchemy import text
-    q = "SELECT * FROM v_live_lots"
+    # v_live_lots deliberately excludes closed plats -- a finished plat must leave
+    # the monitor. --all reaches past that filter for when you want the whole board.
+    q = ("SELECT p.anchor AS ticket, l.key AS lot, l.state, NULL::text AS phase, "
+         "NULL::text AS agent, l.attempt, NULL::interval AS elapsed, "
+         "NULL::interval AS since_heartbeat, NULL::float8 AS typical_s, "
+         "false AS stale, l.attempt >= 2 AS retrying, l.attempt >= 3 AS last_chance, "
+         "l.state = 'BLOCKED' AS needs_human, "
+         "(SELECT coalesce(sum(cost_usd),0) FROM attempts WHERE lot_id = l.id) AS cost, "
+         "(SELECT coalesce(bool_or(cost_estimated), false) FROM attempts "
+         "  WHERE lot_id = l.id) AS cost_estimated, "
+         "(SELECT coalesce(sum(permission_denials),0) FROM attempts "
+         "  WHERE lot_id = l.id) AS permission_denials "
+         "FROM lots l JOIN plats p ON p.id = l.plat_id") if all_ else \
+        "SELECT * FROM v_live_lots"
     if anchor:
-        q += " WHERE ticket = :a"
-    q += " ORDER BY ticket, lot"
+        q += (" WHERE p.anchor = :a" if all_ else " WHERE ticket = :a")
+    q += " ORDER BY ticket, lot" if not all_ else " ORDER BY p.anchor, l.key"
     with DB.engine().begin() as conn:
         rows = conn.execute(text(q), {"a": anchor} if anchor else {}).mappings().all()
     t = Table(box=None, header_style="dim")
@@ -219,6 +234,9 @@ def status(anchor: str = typer.Argument(None)):
                   f"${r['cost']:.2f}" + ("~" if r["cost_estimated"] else ""),
                   " ".join(sig) or "[dim].[/dim]")
     c.print(t)
+    if not rows and not all_:
+        c.print("[dim]nothing in flight. `plat status --all` includes closed plats, "
+                "`plat history` lists delivered ones.[/dim]")
     if any(r["cost_estimated"] for r in rows):
         c.print("[dim]~ cost estimated from tokens, not reported by the provider[/dim]")
 
@@ -257,6 +275,66 @@ def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
     c.print(f"[green]Plat Room[/green] {url}")
     if open_browser:
         webbrowser.open(url)
+
+
+@app.command()
+def history(limit: int = 25,
+            markdown: bool = typer.Option(False, "--markdown", "-m",
+                  help="emit rows for work-items/INDEX.md")):
+    """Delivered plats — the archive the live monitor deliberately hides.
+
+    Reads v_delivered_plats, which is the row shape work-items/INDEX.md already
+    uses. With --markdown it emits those rows ready to paste; "Where it stands"
+    comes back as FACTS only, because the honest state — which env it is live in,
+    what is held for sign-off — is a judgement Plat cannot make and you can.
+    """
+    from sqlalchemy import text
+    with DB.engine().begin() as conn:
+        rows = conn.execute(text(
+            "SELECT * FROM v_delivered_plats ORDER BY closed DESC NULLS LAST LIMIT :n"),
+            {"n": limit}).mappings().all()
+    if not rows:
+        c.print("[dim]no delivered plats yet[/dim]")
+        return
+
+    if markdown:
+        print("| Tickets | Summary | Status | Started | Closed | Where it stands |")
+        print("|---|---|---|---|---|---|")
+        for r in rows:
+            n = len(r["roster"] or [])
+            tickets = f"**{r['anchor']}**" + (f" +{n}" if n else "")
+            facts = (f"{r['lots']} lot(s), {r['attempts']} attempts, "
+                     f"{r['findings']} finding(s), ${r['spend']:.2f}.")
+            if r["roster_gap"]:
+                facts += " ⚠ a roster ticket has no delivered plat of its own."
+            print(f"| {tickets} | {r['title']} | {r['status']} | {r['started']} "
+                  f"| {r['closed']} | {facts} |")
+        c.print("\n[dim]\"Where it stands\" is yours to write — these are facts, "
+                "not the honest state. Reconcile with /mlg-work-ledger.[/dim]")
+        return
+
+    t = Table(box=None, header_style="dim")
+    for col, j in (("ticket", "left"), ("__title__", "left"), ("roster", "right"),
+                   ("started", "left"), ("closed", "left"), ("lots", "right"),
+                   ("att", "right"), ("find", "right"), ("spend", "right"),
+                   ("flag", "left")):
+        if col == "__title__":
+            t.add_column("title", justify=j, no_wrap=True, overflow="ellipsis",
+                         max_width=54)
+        else:
+            t.add_column(col, justify=j)
+    for r in rows:
+        n = len(r["roster"] or [])
+        t.add_row(f"[green]{r['anchor']}[/green]", r["title"] or "",
+                  f"+{n}" if n else "[dim]—[/dim]",
+                  str(r["started"] or "—"), str(r["closed"] or "—"),
+                  str(r["lots"]), str(r["attempts"]), str(r["findings"]),
+                  f"${r['spend']:.2f}",
+                  "[red]⚠ roster gap[/red]" if r["roster_gap"] else "[dim]·[/dim]")
+    c.print(t)
+    if any(r["roster_gap"] for r in rows):
+        c.print("[dim]⚠ a roster ticket was never delivered as a plat of its own. "
+                "Plat cannot see Jira status — /mlg-work-ledger cross-checks that.[/dim]")
 
 
 @app.command()
