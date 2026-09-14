@@ -313,21 +313,21 @@ def history(limit: int = 25,
                 "not the honest state. Reconcile with /mlg-work-ledger.[/dim]")
         return
 
+    # 10 columns do not fit 80 chars; rich responds by ellipsising ALL of them.
+    # Fold the roster count into the ticket cell the way the ledger writes it
+    # (**ANCHOR** +N) and truncate the title here rather than fighting the layout.
     t = Table(box=None, header_style="dim")
-    for col, j in (("ticket", "left"), ("__title__", "left"), ("roster", "right"),
-                   ("started", "left"), ("closed", "left"), ("lots", "right"),
-                   ("att", "right"), ("find", "right"), ("spend", "right"),
-                   ("flag", "left")):
-        if col == "__title__":
-            t.add_column("title", justify=j, no_wrap=True, overflow="ellipsis",
-                         max_width=54)
-        else:
-            t.add_column(col, justify=j)
+    for col, j in (("ticket", "left"), ("title", "left"), ("started", "left"),
+                   ("closed", "left"), ("lots", "right"), ("att", "right"),
+                   ("find", "right"), ("spend", "right"), ("flag", "left")):
+        t.add_column(col, justify=j, no_wrap=True)
     for r in rows:
         n = len(r["roster"] or [])
-        t.add_row(f"[green]{r['anchor']}[/green]", r["title"] or "",
-                  f"+{n}" if n else "[dim]—[/dim]",
-                  str(r["started"] or "—"), str(r["closed"] or "—"),
+        title = r["title"] or ""
+        if len(title) > 44:
+            title = title[:43] + "…"
+        t.add_row(f"[green]{r['anchor']}[/green]" + (f" [dim]+{n}[/dim]" if n else ""),
+                  title, str(r["started"] or "—"), str(r["closed"] or "—"),
                   str(r["lots"]), str(r["attempts"]), str(r["findings"]),
                   f"${r['spend']:.2f}",
                   "[red]⚠ roster gap[/red]" if r["roster_gap"] else "[dim]·[/dim]")
