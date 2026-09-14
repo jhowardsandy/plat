@@ -159,6 +159,21 @@ reviewer.correctness:
   resume_session: false
 ```
 
+**The ladder.** Escalation used to have one rung — sonnet to opus, three times the
+price in a single step. Most attempt-2 failures are not "wrong model", they are
+"did not think hard enough", and that is a much cheaper thing to fix:
+
+| attempt | model | effort | session |
+|---|---|---|---|
+| 1 | sonnet | medium | fresh |
+| 2 | sonnet | **xhigh** | **resumes its own** — same model, same context, harder |
+| 3 | **opus** | high | **cold** — new model, fresh eyes, top spend |
+
+Three genuinely different interventions rather than one repeated. `effort` takes
+Claude's scale (`low medium high xhigh max`) because it is the richest; Codex maps
+down to its coarser three, so `xhigh` becomes `high` rather than being silently
+dropped. Gemini has no equivalent and ignores it rather than inventing one.
+
 **Why the reviewer is not read-only.** It must write its own verdict, and a read-only sandbox cannot write at all — it fails *silently*, producing no verdict file and no error. Writes are confined to the attempt's output directory, and the supervisor separately verifies the worktree fingerprint is unchanged across a review. Observed, not trusted.
 
 **Cost.** Claude reports `total_cost_usd` exactly. Codex and Gemini report only tokens, so their cost is estimated and marked `cost_estimated`, shown as `~`. Budget ceilings are therefore approximate on those providers — set them conservatively.

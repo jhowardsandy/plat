@@ -22,6 +22,10 @@ class Role:
     timeout_s: int = 3600
     allowed_tools: list[str] = field(default_factory=list)
     extra_dirs: list[str] = field(default_factory=list)   # readable, not cwd
+    # How hard to think. Claude's scale, because it is the richest; other
+    # providers map down. Most attempt-2 failures are not "wrong model", they are
+    # "did not think hard enough" -- and that is a much cheaper rung to climb.
+    effort: str | None = None            # low | medium | high | xhigh | max
     extra: dict[str, Any] = field(default_factory=dict)
 
 

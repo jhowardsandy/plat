@@ -13,6 +13,9 @@ roles:
     # checks afterwards that no repo it named came back dirty.
     permission_mode: acceptEdits
     allowed_tools: [Read, Glob, Grep, Bash, Write]
+    # The first real draft cost $7.85 at opus/high. If that stings, `model: sonnet`
+    # with `effort: max` is the experiment worth running -- untested here.
+    effort: high
 
   coder:
     provider: claude
@@ -21,11 +24,15 @@ roles:
     # a coder needs a shell for tests and git. The blast radius is one disposable,
     # git-backed worktree; without this it burns a full attempt on denied tools.
     allowed_tools: [Bash, Read, Write, Edit, Glob, Grep, TodoWrite]
+    effort: medium
     resume_session: true            # attempt 2 resumes; fsm starts attempt 3 cold
     queue: q.code
+    # Three DIFFERENT interventions, not one repeated. Most attempt-2 failures are
+    # "did not think hard enough" rather than "wrong model", and thinking harder
+    # on the same warm session is far cheaper than a model that starts over.
     escalate:
-      attempt_2: {model: opus}      # cheap first, expensive only on proven-hard work
-      attempt_3: {model: opus}
+      attempt_2: {effort: xhigh}                 # same model, same session, harder
+      attempt_3: {model: opus, effort: high}     # new model, cold start, top spend
 
   reviewer.correctness:
     provider: codex                 # a different lineage sees what the author cannot
@@ -34,6 +41,7 @@ roles:
     # silently. Writes are confined to the attempt's own output directory, and the
     # supervisor separately VERIFIES the reviewer left the worktree untouched.
     sandbox: workspace-write
+    effort: high                    # review is judgement, not typing
     resume_session: false           # fresh eyes, every time
     queue: q.review
 
@@ -42,3 +50,6 @@ roles:
   reviewer.quality:  {provider: claude, model: opus}
   closer:            {provider: claude, model: opus}
   recorder:          {provider: claude, model: opus}
+
+# gemini has no reasoning-effort control, so `effort` on a gemini role is ignored
+# rather than mapped to something invented.

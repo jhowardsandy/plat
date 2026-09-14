@@ -5,6 +5,11 @@ from .base import Role, AgentResult, spawn
 
 NAME = "codex"
 
+# Codex's reasoning scale is coarser than Claude's; xhigh and max both land on
+# high rather than being silently dropped.
+EFFORT = {"low": "low", "medium": "medium", "high": "high",
+          "xhigh": "high", "max": "high"}
+
 # Codex emits token counts but NEVER a dollar figure. Cost is therefore an
 # ESTIMATE -- recorded as such, so a budget ceiling is never enforced against a
 # number that merely looks authoritative. USD per 1M tokens.
@@ -27,6 +32,10 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
     # and a hardcoded name fails with a 400 four seconds in.
     if role.model and role.model != "default":
         cmd += ["-m", role.model]
+    if role.effort:
+        eff = EFFORT.get(role.effort)
+        if eff:
+            cmd += ["-c", f'model_reasoning_effort="{eff}"']
     return cmd
 
 

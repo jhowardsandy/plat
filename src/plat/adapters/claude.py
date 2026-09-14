@@ -16,10 +16,15 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
     ]
     for d in role.extra_dirs:
         cmd += ["--add-dir", str(d)]
-    if role.allowed_tools:
-        cmd += ["--allowedTools", *role.allowed_tools]
+    if role.effort:
+        cmd += ["--effort", role.effort]
     if role.session_id:
         cmd += ["--resume", role.session_id]
+    # --allowedTools is VARIADIC, so it goes last. A following flag happens to
+    # terminate it today, but ordering a variadic anywhere but the end is the
+    # kind of thing that breaks quietly when an argument stops looking like one.
+    if role.allowed_tools:
+        cmd += ["--allowedTools", *role.allowed_tools]
     return cmd
 
 
