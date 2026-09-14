@@ -8,14 +8,14 @@ from pathlib import Path
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
-import subprocess, threading
+import itertools, subprocess, threading
 
 from . import fsm, gates, ingest, prompts as P, roles as R, adapters
 from .config import Config
 from .decisions import record
 from .fsm import LotState
 from .models import (Plat, Lot, Attempt, Verdict, Finding, Criterion,
-                     Session as SessionRow, Transcript)
+                     Session as SessionRow, Transcript, LogChunk)
 
 
 class Halt(Exception):
@@ -58,6 +58,7 @@ def build_ctx(db, plat, lot) -> fsm.Ctx:
         prev_fingerprints=frozenset(f.fingerprint for f in prev),
         heartbeat_at=lot.heartbeat_at,
         budget_exhausted=(plat.budget_usd > 0 and spent(db, plat) >= plat.budget_usd),
+        paused=(plat.status == "paused"),
     )
 
 
@@ -72,6 +73,7 @@ def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
             log=print) -> str:
     parent = None
     while True:
+        db.refresh(plat)          # pause may have been set from another process
         ctx = build_ctx(db, plat, lot)
         nxt = fsm.decide(LotState(lot.state), lot.attempt, ctx)
         log(f"  [{lot.state} a{lot.attempt}] -> {nxt.kind}: {nxt.reason}")
@@ -245,8 +247,21 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     log(f"  {nxt.phase}: {role.provider}/{role.model}{note} ...")
 
     before = _worktree_fingerprint(wt) if nxt.phase != "code" else None
+    seq = itertools.count()
+
+    def _chunk(text_: str):
+        # Own session, own transaction. Writing through the runner's session would
+        # keep every chunk inside its open transaction until the agent finished --
+        # which is exactly the window a live tail exists to cover.
+        from .db import session as _s
+        try:
+            with _s() as s2:
+                s2.add(LogChunk(attempt_id=a.id, seq=next(seq), body=text_))
+        except Exception:
+            pass
+
     with _Heartbeat(lot.id):
-        res = adapters.run(role, pf, wt)
+        res = adapters.run(role, pf, wt, on_chunk=_chunk)
     a.exit_code = res.exit_code
     a.cost_usd = res.cost_usd
     a.cost_estimated = res.cost_estimated

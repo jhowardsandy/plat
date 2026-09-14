@@ -232,6 +232,26 @@ def start(anchor: str):
 
 
 @app.command()
+def pause(anchor: str = typer.Argument(None), resume: bool = typer.Option(False, "--resume")):
+    """Stop dispatching new work. In-flight agents finish; nothing new starts."""
+    from .decisions import record
+    with DB.session() as s:
+        p = _resolve(s, anchor)
+        was = p.status
+        new = "running" if resume else "paused"
+        if was == new:
+            c.print(f"[dim]{p.anchor} already {new}[/dim]")
+            return
+        record(s, plat_id=p.id, actor="human", actor_detail="cli", kind="override",
+               decision=f"{'resumed' if resume else 'paused'} ({was} -> {new})",
+               rationale="in-flight agents finish; the next transition stops",
+               alternatives=["leave it running"] if not resume else ["leave it paused"],
+               inputs={"was": was},
+               apply=lambda: setattr(p, "status", new))
+        c.print(f"[green]{p.anchor}[/green] {was} -> {new}")
+
+
+@app.command()
 def reopen(anchor: str, lot: str, state: str = "CODING", note: str = ""):
     """Put a lot back into play. Recorded as YOUR decision, with the reason."""
     from .decisions import record
@@ -257,7 +277,11 @@ def _live_rows(anchor: str | None, all_: bool):
     from sqlalchemy import text
     # v_live_lots deliberately excludes closed plats -- a finished plat must leave
     # the monitor. --all reaches past that filter for when you want the whole board.
-    q = ("SELECT p.anchor AS ticket, l.key AS lot, l.state, NULL::text AS phase, "
+    # The --all branch must return the SAME columns as v_live_lots: three
+    # renderers consume this, and a missing column is a runtime failure in
+    # whichever one happens to need it (lot_id, for drill-in, was the first).
+    q = ("SELECT p.id AS plat_id, p.anchor AS ticket, l.id AS lot_id, "
+         "l.key AS lot, l.state, NULL::text AS phase, "
          "NULL::text AS agent, l.attempt, NULL::interval AS elapsed, "
          "NULL::interval AS since_heartbeat, NULL::float8 AS typical_s, "
          "false AS stale, l.attempt >= 2 AS retrying, l.attempt >= 3 AS last_chance, "
@@ -387,6 +411,17 @@ def _hms(td) -> str:
         return "-"
     s = int(td.total_seconds())
     return f"{s // 60:02d}:{s % 60:02d}" if s < 3600 else f"{s // 3600}h{(s % 3600) // 60:02d}"
+
+
+@app.command()
+def top(anchor: str = typer.Argument(None),
+        all_: bool = typer.Option(False, "--all", "-a",
+              help="include closed plats (v_live_lots hides them)")):
+    """The operator's view: drill-in, a live tail of the running agent, and keys
+    that act. `plat status --watch` is the glanceable version; this is the one you
+    sit in when something needs attention."""
+    from .tui import run as _run
+    _run(anchor, all_)
 
 
 @app.command()

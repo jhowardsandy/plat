@@ -13,6 +13,7 @@ dependencies = [
   "jsonschema>=4.22",
   "pyyaml>=6.0",
   "rich>=13.7",
+  "textual>=0.80",
 ]
 
 [project.scripts]
@@ -21,6 +22,10 @@ plat = "plat.cli:app"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/plat"]

@@ -47,3 +47,18 @@ def test_stale_is_relative_to_history_not_a_flat_constant(conn):
         "SELECT pg_get_viewdef('v_live_lots'::regclass, true)")).scalar()
     assert "median_s" in src and "make_interval" in src
     assert "percentile_cont" in src
+
+
+def test_the_all_branch_returns_the_same_columns_as_the_view(conn):
+    """`--all` is a hand-written stand-in for v_live_lots. Three renderers read
+    it, so a column the view has and it lacks fails at runtime in whichever one
+    happens to need it — drill-in broke on a missing lot_id exactly this way."""
+    from plat.cli import _live_rows
+    view_cols = {r[0] for r in conn.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'v_live_lots'"))}
+    rows = _live_rows(None, True)
+    if not rows:
+        pytest.skip("no lots to compare")
+    missing = view_cols - set(rows[0].keys())
+    assert not missing, f"--all is missing {sorted(missing)} that v_live_lots has"

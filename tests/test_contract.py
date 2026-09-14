@@ -67,3 +67,14 @@ def test_invalid_verdict_value_rejected(tmp_path):
     bad["verdict"] = "looks good to me"
     with pytest.raises(ContractError):
         load_verdict(w(tmp_path, "review", bad), "review")
+
+
+def test_findings_that_stop_being_raised_are_marked_resolved():
+    """The corpus must distinguish a complaint that was FIXED from one still open.
+    Without it prior art can only say someone once complained, never whether it
+    stuck — which is most of its value."""
+    import inspect
+    from plat import ingest
+    src = inspect.getsource(ingest.persist)
+    assert "resolved_in_attempt_id" in src
+    assert "Attempt.n < attempt.n" in src, "only PRIOR attempts' findings resolve"

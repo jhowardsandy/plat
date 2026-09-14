@@ -21,8 +21,9 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
     return cmd
 
 
-def run(role: Role, prompt_file: Path, cwd: Path) -> AgentResult:
-    rc, out, err, dt = spawn(build(role, prompt_file, cwd), cwd, role.timeout_s)
+def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None) -> AgentResult:
+    rc, out, err, dt = spawn(build(role, prompt_file, cwd), cwd,
+                             role.timeout_s, on_chunk=on_chunk)
     res = AgentResult(ok=(rc == 0), exit_code=rc, duration_s=dt, stdout=out, stderr=err)
     try:
         d = json.loads(out)

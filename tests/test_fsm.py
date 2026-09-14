@@ -116,3 +116,14 @@ def test_disabled_phases_are_unreachable():
     assert decide(LotState.DOCS, 1, Ctx(deps_met=True, phases=full)).state == LotState.QUALITY
     assert decide(LotState.DOCS, 1,
                   Ctx(deps_met=True, phases=frozenset({"docs"}))).kind == "close"
+
+
+def test_pause_is_reachable_from_plat_status():
+    """Ctx.paused was honoured by the FSM and never populated by build_ctx, so
+    pausing did nothing at all. Guard the wiring, not just the rule."""
+    import inspect
+    from plat import runner
+    src = inspect.getsource(runner.build_ctx)
+    assert "paused=" in src and 'status == "paused"' in src
+    assert "db.refresh(plat)" in inspect.getsource(runner.run_lot), \
+        "pause set by another process is invisible without a refresh"

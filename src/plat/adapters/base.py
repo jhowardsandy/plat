@@ -4,10 +4,10 @@ This is the layer that makes providers swappable: the FSM knows role names,
 roles.yaml maps a role to a provider, and only this package knows how to run one.
 """
 from __future__ import annotations
-import subprocess, time
+import os, signal, subprocess, time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass

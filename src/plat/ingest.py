@@ -7,8 +7,10 @@ from __future__ import annotations
 import hashlib, json
 from pathlib import Path
 from jsonschema import Draft202012Validator
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
-from .models import Verdict, Finding, Session as SessionRow, Artifact, Transcript
+from .models import (Verdict, Finding, Attempt,
+                     Session as SessionRow, Artifact, Transcript)
 from .decisions import record
 
 SCHEMAS = Path(__file__).parent / "schemas"
@@ -58,6 +60,21 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
                         sha256=hashlib.sha256(body.encode()).hexdigest()))
     if result.stdout:
         db.add(Transcript(attempt_id=attempt.id, body=result.stdout[:4_000_000]))
+
+    # A finding that stopped being raised was fixed. Without this the corpus can
+    # only ever say "someone once complained about X", never whether the complaint
+    # survived -- which is most of its value as prior art (design doc §12), and
+    # what separates a resolved finding from one dismissed on purpose.
+    if attempt.phase in ("review", "quality"):
+        still = {f["fingerprint"] for f in verdict.get("findings", [])}
+        prior = db.scalars(
+            select(Finding).join(Attempt, Attempt.id == Finding.attempt_id)
+            .where(Attempt.lot_id == lot.id,
+                   Attempt.n < attempt.n,
+                   Finding.resolved_in_attempt_id.is_(None))).all()
+        for f in prior:
+            if f.fingerprint not in still:
+                f.resolved_in_attempt_id = attempt.id
 
     for f in verdict.get("findings", []):
         db.add(Finding(
