@@ -28,10 +28,15 @@ def _now() -> Mapped[datetime]:
 class Plat(Base):
     __tablename__ = "plats"
     id: Mapped[int] = _pk()
-    anchor: Mapped[str] = mapped_column(String(32), index=True)       # DEV-1234
+    # Wide enough for a ticket key AND a review anchor (review/<repo>@<branch>)
+    anchor: Mapped[str] = mapped_column(String(160), index=True)
     tickets: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)   # members
     related: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)   # context only
     title: Mapped[str] = mapped_column(Text, default="")
+    # 'plat' is orchestrated work; 'review' is a single-shot review of a branch
+    # someone already wrote. Same tables so findings join one corpus; separate
+    # kind so the ledger is not drowned by them.
+    kind: Mapped[str] = mapped_column(String(8), default="plat", index=True)
     status: Mapped[str] = mapped_column(String(16), default="planned")
     # planned | running | paused | closing | recording | signoff | closed | aborted
     budget_usd: Mapped[float] = mapped_column(Float, default=0.0)
@@ -115,7 +120,7 @@ class Finding(Base):
     id: Mapped[int] = _pk()
     attempt_id: Mapped[int] = mapped_column(ForeignKey("attempts.id"), index=True)
     origin_id: Mapped[str] = mapped_column(String(64))   # with (anchor,repo,fingerprint):
-    anchor: Mapped[str] = mapped_column(String(32))      #   a stable cross-install identity,
+    anchor: Mapped[str] = mapped_column(String(160))     #   a stable cross-install identity,
     repo: Mapped[str] = mapped_column(String(128))       #   so corpora can be unioned later
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     severity: Mapped[str] = mapped_column(String(16))

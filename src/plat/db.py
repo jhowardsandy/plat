@@ -32,11 +32,18 @@ def session() -> Session:
         s.close()
 
 
+VIEWS = ["v_live_lots", "v_plat_summary", "v_decision_tree",
+         "v_delivered_plats", "v_reviews"]
+
 ADDITIVE = [
     "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS cost_estimated boolean DEFAULT false",
     "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS permission_denials integer DEFAULT 0",
     "ALTER TABLE lots ADD COLUMN IF NOT EXISTS base_ref varchar(64)",
     "ALTER TABLE lots ADD COLUMN IF NOT EXISTS config jsonb DEFAULT \'{}\'::jsonb",
+    "ALTER TABLE plats ADD COLUMN IF NOT EXISTS kind varchar(8) DEFAULT \'plat\'",
+    # Widenings are safe and idempotent. Narrowing never belongs here.
+    "ALTER TABLE plats ALTER COLUMN anchor TYPE varchar(160)",
+    "ALTER TABLE findings ALTER COLUMN anchor TYPE varchar(160)",
 ]
 
 
@@ -50,6 +57,10 @@ def init() -> list[str]:
     """
     Base.metadata.create_all(engine())
     with engine().begin() as c:
+        # Views must go first: Postgres refuses to alter the type of a column a
+        # view selects, and views.sql recreates every one of them below anyway.
+        for v in VIEWS:
+            c.execute(text(f"DROP VIEW IF EXISTS {v} CASCADE"))
         for stmt in ADDITIVE:
             c.execute(text(stmt))
     sql = (Path(__file__).parent / "views.sql").read_text()

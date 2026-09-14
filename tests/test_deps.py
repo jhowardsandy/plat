@@ -50,3 +50,40 @@ def test_every_runtime_import_is_a_declared_dependency():
     assert not missing, (
         "imported but not declared in pyproject: " + ", ".join(missing)
         + " — this passes under `uv run` and breaks the installed tool")
+
+
+def test_spawn_streams_chunks_while_the_process_runs(monkeypatch):
+    """A behavioural test, not a source scan.
+
+    The streaming rewrite was once silently no-applied by a failed string
+    replace: the adapters passed on_chunk, spawn never accepted it, and the suite
+    stayed green because nothing exercised the path. plat top's live log tail was
+    dead for days as a result.
+    """
+    import sys
+    from pathlib import Path
+    from plat.adapters import base
+    from plat.adapters.base import spawn
+
+    # Drive the interval rather than the wall clock, so the test measures the
+    # mechanism and not how fast this machine happens to be.
+    monkeypatch.setattr(base, "CHUNK_EVERY_S", 0.3)
+    got: list[str] = []
+    script = ("import sys,time\n"
+              "for i in range(3):\n"
+              "    print('line', i, flush=True)\n"
+              "    time.sleep(0.9)\n")
+    rc, out, _err, _dt = spawn([sys.executable, "-c", script], Path.cwd(), 30,
+                               on_chunk=got.append)
+    assert rc == 0
+    assert "line 0" in out and "line 2" in out
+    assert got, "on_chunk was never called — nothing to tail"
+    assert len(got) >= 2, f"output arrived in one lump ({len(got)}), so it did not stream"
+    assert "line 0" in "".join(got)
+
+
+def test_every_adapter_accepts_the_streaming_callback():
+    import inspect
+    from plat import adapters
+    for name, mod in adapters.PROVIDERS.items():
+        assert "on_chunk" in inspect.signature(mod.run).parameters, name

@@ -102,6 +102,49 @@ def skills(unlink: bool = typer.Option(False, "--unlink")):
 
 
 @app.command()
+def review(
+    repo: Path = typer.Argument(None, help="repo or path inside one (default: cwd)"),
+    base: str = typer.Option(None, help="diff base (default: merge-base with the default branch)"),
+    test: str = typer.Option(None, "--test", help="run this first and give the reviewer the result"),
+    role: str = typer.Option("reviewer.correctness", help="role from roles.yaml"),
+    fail_on: str = typer.Option("high", "--fail-on",
+              help="exit non-zero at this severity or above: high|medium|low|never"),
+):
+    """Cross-model review of a branch you already wrote. No plan, no worktree, no coder.
+
+    The cheapest useful thing here: on both of Plat's first real runs the coder
+    produced something that passed the tests and the REVIEWER caught the defect.
+    This is that half, on work you did yourself.
+    """
+    from . import review as _review
+    cfg = load()
+    try:
+        with DB.session() as s:
+            verdict, findings = _review.run(
+                s, cfg, repo=Path(repo or Path.cwd()), base=base,
+                role_name=role, test_cmd=test, log=c.print)
+    except (RuntimeError, ingest.ContractError) as e:
+        c.print(f"[red]{e}[/red]")
+        raise typer.Exit(2)
+
+    colour = {"pass": "green", "changes_requested": "yellow", "blocked": "red"}
+    c.print(f"\n[bold {colour.get(verdict,'white')}]{verdict}[/bold "
+            f"{colour.get(verdict,'white')}]  ·  {len(findings)} finding(s)\n")
+    for f in sorted(findings, key=lambda x: -_review.SEVERITY.get(x.severity, 0)):
+        sev = {"high": "red", "medium": "yellow", "low": "dim"}.get(f.severity, "white")
+        loc = f.file + (f":{f.line}" if f.line else "")
+        c.print(f"[{sev}]●[/{sev}] [bold]{loc}[/bold]  [dim]{f.fingerprint}[/dim]")
+        c.print(f"  {f.claim}")
+        if f.required_fix:
+            c.print(f"  [dim]fix:[/dim] {f.required_fix}")
+        c.print("")
+    if fail_on != "never":
+        floor = _review.SEVERITY.get(fail_on, 2)
+        if any(_review.SEVERITY.get(f.severity, 0) >= floor for f in findings):
+            raise typer.Exit(1)
+
+
+@app.command()
 def demo(clear: bool = typer.Option(False, "--clear", help="remove the demo data")):
     """Seed a demo plat: lots working, wedged, blocked, waiting and delivered.
 

@@ -127,3 +127,17 @@ def test_pause_is_reachable_from_plat_status():
     assert "paused=" in src and 'status == "paused"' in src
     assert "db.refresh(plat)" in inspect.getsource(runner.run_lot), \
         "pause set by another process is invisible without a refresh"
+
+
+def test_branch_name_does_not_double_the_ticket_prefix():
+    """DEV-3911 produced dev-dev-3911-<slug>. The convention is dev-<n>-<slug>."""
+    import re
+    src = __import__("plat.worktree", fromlist=["x"])
+    assert 'f"dev-{m.group(2)}-{slug}"' in __import__("inspect").getsource(src.ensure)
+
+
+def test_anchor_column_fits_more_than_a_ticket_key():
+    """A review anchor is review/<repo>@<branch> and blew a varchar(32)."""
+    from plat.models import Plat, Finding
+    assert Plat.__table__.c.anchor.type.length >= 160
+    assert Finding.__table__.c.anchor.type.length >= 160

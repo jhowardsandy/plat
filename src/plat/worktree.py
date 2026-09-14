@@ -38,8 +38,10 @@ def ensure(cfg: Config, anchor: str, lot_key: str, repo_rel: str,
     wt = path_for(cfg, anchor, lot_key)
     # Ticketed work is dev-<ticket>-<slug>; unticketed already carries its own
     # <prefix>_<name> and must not be wrapped in a fake ticket shape.
-    ticketed = re.fullmatch(r"[A-Z]+-\d+", anchor) is not None
-    branch = f"dev-{anchor.lower()}-{slug}" if ticketed else anchor
+    # dev-<number>-<slug>, not dev-<PROJ-number>-<slug>: lowercasing the whole
+    # anchor produced dev-dev-3911-limiter-key.
+    m = re.fullmatch(r"([A-Za-z]+)-(\d+)", anchor)
+    branch = f"dev-{m.group(2)}-{slug}" if m else anchor
     if not wt.exists():
         _git(["fetch", "origin", "--quiet"], repo)
         base = base_ref or f"origin/{default_branch(repo)}"

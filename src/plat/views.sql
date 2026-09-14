@@ -51,7 +51,7 @@ LEFT JOIN LATERAL (
   WHERE lh.repo = l.repo AND a.phase = cur.phase
     AND a.finished_at IS NOT NULL AND a.provider <> 'supervisor'
 ) hist ON true
-WHERE p.status NOT IN ('closed', 'aborted');
+WHERE p.status NOT IN ('closed', 'aborted') AND p.kind = 'plat';
 
 DROP VIEW IF EXISTS v_plat_summary CASCADE;
 CREATE VIEW v_plat_summary AS
@@ -118,5 +118,26 @@ SELECT
       SELECT 1 FROM plats q WHERE q.anchor = tk AND q.closed_at IS NOT NULL)
   ) AS roster_gap
 FROM plats p LEFT JOIN lots l ON l.plat_id = p.id
-WHERE p.closed_at IS NOT NULL
+WHERE p.closed_at IS NOT NULL AND p.kind = 'plat'
 GROUP BY p.id;
+
+-- Standalone reviews of branches someone already wrote. The cheapest way to get
+-- cross-model review: no plan, no worktree, no coder.
+DROP VIEW IF EXISTS v_reviews CASCADE;
+CREATE VIEW v_reviews AS
+SELECT
+  p.anchor, p.title AS branch, l.repo,
+  p.started_at,
+  a.provider || '/' || a.model                       AS reviewer,
+  v.verdict,
+  (SELECT count(*) FROM findings f WHERE f.attempt_id = a.id)                    AS findings,
+  (SELECT count(*) FROM findings f WHERE f.attempt_id = a.id
+     AND f.severity = 'high')                                                    AS high,
+  a.cost_usd, a.cost_estimated,
+  round(EXTRACT(EPOCH FROM (a.finished_at - a.started_at))::numeric, 0)          AS secs
+FROM plats p
+JOIN lots l ON l.plat_id = p.id
+JOIN attempts a ON a.lot_id = l.id
+LEFT JOIN verdicts v ON v.attempt_id = a.id
+WHERE p.kind = 'review'
+ORDER BY p.id DESC;
