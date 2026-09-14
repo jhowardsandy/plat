@@ -193,6 +193,40 @@ Three renderers, one source. `v_live_lots` computes the derived signals — `sta
 
 **`stale` is relative, not a timeout.** A 95-minute indexing run is healthy; a 12-minute review is probably wedged. The threshold is three times the median duration of that phase in that repo, floored at ten minutes.
 
+## 8b. Being told
+
+Plat's most expensive moment is a lot that stopped for a human while nobody was
+looking: block at minute 20 of an hour-long run and the remaining forty minutes
+are idle. `[notify]` in `~/.plat/config.toml` fixes the latency, not the gate.
+
+```toml
+[notify]
+handlers = ["desktop"]              # desktop | webhook | exec
+on       = ["blocked", "budget"]    # blocked | closed | budget | review_findings
+
+# [notify.webhook]
+# url = "https://hooks.slack.com/services/..."   # a DM or your own channel
+
+# [notify.exec]
+# cmd = "my-notifier"               # the event arrives on stdin as JSON
+```
+
+**Plat notifies you. It never announces to anyone else.** A team-channel post, a
+pull request, a ticket transition — those speak in your name, and they stay a
+deliberate act you take, not a side effect of a run. Plat will happily draft one;
+a human sends it. There is a test asserting the notifier has not grown an
+outward-speaking path.
+
+A notification is a courtesy, so it can never be blamed for a failed run: a
+handler that raises is swallowed, the handlers after it still fire, and an
+unreachable webhook times out and is forgotten.
+
+Slack specifically: an **incoming webhook** posts outward only and needs nothing
+listening, which is why it suits a local tool. A full Slack *app* — one that asks
+a blocked lot's question with a reply box and unblocks it from your phone — needs
+a process listening, and that is a real architectural change for something that
+is deliberately local-only. Worth doing; not the same size of job.
+
 ## 9. Testing ladder
 
 ```bash

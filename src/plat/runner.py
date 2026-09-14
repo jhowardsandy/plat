@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session as DbSession
 
 import itertools, subprocess, threading
 
-from . import fsm, gates, ingest, prompts as P, roles as R, adapters
+from . import fsm, gates, ingest, notify, prompts as P, roles as R, adapters
 from .config import Config
 from .decisions import record
 from .fsm import LotState
@@ -103,6 +103,13 @@ def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
                             rationale=nxt.reason,
                             apply=lambda: setattr(lot, "state", LotState.BLOCKED.value)).id
             db.commit()
+            # The whole point of notifying: a lot that stops while nobody is
+            # looking costs the rest of the run in wall-clock.
+            notify.send(notify.Event(
+                kind="budget" if "budget" in nxt.reason else "blocked",
+                title=nxt.reason, anchor=plat.anchor, lot=lot.key, urgent=True,
+                detail=_ask(db, lot) or f"plat reopen {plat.anchor} {lot.key} --note '...'"),
+                cfg.notify)
             return LotState.BLOCKED.value
         if nxt.kind == "close":
             record(db, plat_id=plat.id, lot_id=lot.id, parent_id=parent,
@@ -117,7 +124,14 @@ def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
         parent = _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log)
 
 
-def maybe_close_plat(db: DbSession, plat: Plat, log=print) -> bool:
+def _ask(db, lot) -> str | None:
+    """The reviewer's question, if it raised one — that is what you need to read."""
+    a = _latest(db, lot, phases=["review", "quality"])
+    v = _verdict_of(db, a) or {}
+    return v.get("blocking_question")
+
+
+def maybe_close_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
     """Close a plat once every lot is terminal.
 
     In v0 "closed" means exactly that: all lots DONE. v1 inserts closing the
@@ -143,6 +157,10 @@ def maybe_close_plat(db: DbSession, plat: Plat, log=print) -> bool:
     plat.closed_at = datetime.now(timezone.utc)
     db.commit()
     log(f"  [bold green]plat closed[/bold green] ({done}/{len(lots)} lots)")
+    if cfg is not None:
+        notify.send(notify.Event(kind="closed", anchor=plat.anchor,
+                                 title=f"closed — {done}/{len(lots)} lots done",
+                                 detail=f"${spent(db, plat):.2f}"), cfg.notify)
     return True
 
 

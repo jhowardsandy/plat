@@ -138,6 +138,12 @@ def review(
         if f.required_fix:
             c.print(f"  [dim]fix:[/dim] {f.required_fix}")
         c.print("")
+    from . import notify as _n
+    high = [f for f in findings if f.severity == "high"]
+    if high:
+        _n.send(_n.Event(kind="review_findings", anchor="review",
+                         title=f"{len(high)} high-severity finding(s)",
+                         detail=high[0].claim[:160]), cfg.notify)
     if fail_on != "never":
         floor = _review.SEVERITY.get(fail_on, 2)
         if any(_review.SEVERITY.get(f.severity, 0) >= floor for f in findings):
@@ -312,7 +318,7 @@ def start(anchor: str):
                 c.print(f"  [red]halted:[/red] {e}")
                 continue
             c.print(f"  [bold]{final}[/bold]")
-        runner.maybe_close_plat(s, p, log=c.print)
+        runner.maybe_close_plat(s, p, log=c.print, cfg=cfg)
         c.print(f"\nspent ${runner.spent(s, p):.2f} of ${p.budget_usd:.2f}")
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import tomllib
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -29,6 +29,9 @@ DEFAULTS = {
     "workspace_root": str(Path.home() / "src"),
     "stale_after_s": 600,
     "max_attempts": 3,
+    # Notify YOU when a run needs you. Plat never announces to other people.
+    "notify": {"enabled": True, "handlers": ["desktop"],
+               "on": ["blocked", "budget"]},
 }
 
 CONFIG_TEMPLATE = '''# plat configuration -- environment variables override every value here.
@@ -50,6 +53,23 @@ stale_after_s = {stale_after_s}
 
 # Code -> review -> code cycles before a lot stops and asks for a human.
 max_attempts = {max_attempts}
+
+# Plat interrupts YOU when a run needs you, and never announces to anyone else --
+# a pull request, a ticket transition or a team-channel post speaks in your name
+# and stays a deliberate act.
+#
+#   handlers: desktop | webhook | exec
+#   on:       blocked | closed | budget | review_findings
+[notify]
+enabled  = true
+handlers = ["desktop"]
+on       = ["blocked", "budget"]
+
+# [notify.webhook]                     # posts outward only, nothing to run
+# url = "https://hooks.slack.com/services/..."   # point at a DM or your own channel
+
+# [notify.exec]                        # anything else: bot token, ntfy, pager.
+# cmd = "my-notifier"                  # the event arrives on stdin as JSON
 '''
 
 
@@ -59,7 +79,8 @@ class Config:
     database_url: str
     broker_url: str
     roles_path: Path
-    origin_id: str          # per-install uuid; keeps findings mergeable across installs
+    origin_id: str
+    notify: dict = field(default_factory=dict)          # per-install uuid; keeps findings mergeable across installs
     stale_after_s: int = 600
     max_attempts: int = 3
 
@@ -116,6 +137,7 @@ def load() -> Config:
         broker_url=str(pick("broker_url", "PLAT_BROKER_URL")),
         roles_path=Path(os.environ.get("PLAT_ROLES", h / "roles.yaml")),
         origin_id=origin.read_text().strip(),
+        notify=(f.get("notify") or DEFAULTS["notify"]),
         stale_after_s=int(pick("stale_after_s", "PLAT_STALE_AFTER_S")),
         max_attempts=int(pick("max_attempts", "PLAT_MAX_ATTEMPTS")),
     )
