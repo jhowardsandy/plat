@@ -94,4 +94,8 @@ Not built yet: the Celery dispatcher and multi-lot DAG, closing the traverse, re
 
 ## Licence
 
-Not yet chosen — see the repository owner.
+[Apache License 2.0](LICENSE). Copyright 2026 Justin Howard.
+
+Apache-2.0 includes an express grant of patent rights from contributors, and
+requires that anyone redistributing a modified version states what they changed —
+which is the reason to prefer it over MIT for a tool other people will fork.

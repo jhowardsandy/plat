@@ -2,7 +2,19 @@
 name = "plat"
 version = "0.1.0"
 description = "Divide one ticket into lots, work them in parallel, close the traverse."
+readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{name = "Justin Howard"}]
+keywords = ["agents", "orchestration", "llm", "code-review", "claude", "codex"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
   "sqlalchemy>=2.0",
   "psycopg[binary]>=3.2",
