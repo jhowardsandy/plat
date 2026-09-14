@@ -19,7 +19,10 @@ roles:
   reviewer.correctness:
     provider: codex                 # a different lineage sees what the author cannot
     model: gpt-5.5          # "default" lets the CLI choose; account reach varies
-    sandbox: read-only
+    # NOT read-only: a read-only sandbox cannot write the verdict either, and fails
+    # silently. Writes are confined to the attempt's own output directory, and the
+    # supervisor separately VERIFIES the reviewer left the worktree untouched.
+    sandbox: workspace-write
     resume_session: false           # fresh eyes, every time
     queue: q.review
 

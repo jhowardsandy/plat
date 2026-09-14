@@ -5,7 +5,7 @@ own .worktrees/ convention, alongside the ones you create by hand. Two homes for
 worktrees depending on who made them is exactly the drift to avoid.
 """
 from __future__ import annotations
-import subprocess
+import re, subprocess
 from pathlib import Path
 from .config import Config
 
@@ -36,7 +36,10 @@ def ensure(cfg: Config, anchor: str, lot_key: str, repo_rel: str,
     if not (repo / ".git").exists():
         raise FileNotFoundError(f"no git repo at {repo}")
     wt = path_for(cfg, anchor, lot_key)
-    branch = f"dev-{anchor.lower()}-{slug}"
+    # Ticketed work is dev-<ticket>-<slug>; unticketed already carries its own
+    # <prefix>_<name> and must not be wrapped in a fake ticket shape.
+    ticketed = re.fullmatch(r"[A-Z]+-\d+", anchor) is not None
+    branch = f"dev-{anchor.lower()}-{slug}" if ticketed else anchor
     if not wt.exists():
         _git(["fetch", "origin", "--quiet"], repo)
         base = base_ref or f"origin/{default_branch(repo)}"

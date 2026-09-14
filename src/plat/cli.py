@@ -124,6 +124,7 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
                 raise typer.Exit(1)
             c.print(f"  [green]gate smoke ok[/green] {sm.tests_passed} passed")
             cfgd = {"gate": g, "plan": L.get("plan", ""),
+                    "phases": d.get("phases", ["code", "review"]),
                     "plat_map": d.get("plat_map", ""), "branch": branch}
             if lot is None:
                 lot = Lot(plat_id=p.id, key=L["key"], repo=L["repo"],
@@ -160,6 +161,23 @@ def start(anchor: str):
                 continue
             c.print(f"  [bold]{final}[/bold]")
         c.print(f"\nspent ${runner.spent(s, p):.2f} of ${p.budget_usd:.2f}")
+
+
+@app.command()
+def reopen(anchor: str, lot: str, state: str = "CODING", note: str = ""):
+    """Put a lot back into play. Recorded as YOUR decision, with the reason."""
+    from .decisions import record
+    with DB.session() as s:
+        p = s.scalars(select(Plat).where(Plat.anchor == anchor)).one()
+        L = s.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).one()
+        was = L.state
+        record(s, plat_id=p.id, lot_id=L.id, actor="human", actor_detail="cli",
+               kind="override", decision=f"reopened {was} -> {state}",
+               rationale=note or "(no reason given)",
+               alternatives=["leave blocked"], inputs={"was": was},
+               apply=lambda: (setattr(L, "state", state),
+                              setattr(L, "human_note", note or None)))
+        c.print(f"[green]{lot}[/green] {was} -> {state}")
 
 
 @app.command()

@@ -100,3 +100,19 @@ def test_every_reachable_path_terminates():
             assert n.attempt is None or n.attempt <= MAX_ATTEMPTS
             state = n.state or state
             attempt = n.attempt or attempt
+
+
+def test_disabled_phases_are_unreachable():
+    """v0 ships code+review. A phase with no provider must never be dispatched."""
+    v0 = frozenset({"code", "review"})
+    n = decide(LotState.REVIEWING, 1,
+               Ctx(deps_met=True, verdict=PASS, gate=GOOD_GATE, phases=v0))
+    assert n.kind == "close" and n.state == LotState.DONE
+
+    full = frozenset({"code", "review", "docs", "quality"})
+    n = decide(LotState.REVIEWING, 1,
+               Ctx(deps_met=True, verdict=PASS, gate=GOOD_GATE, phases=full))
+    assert n.state == LotState.DOCS
+    assert decide(LotState.DOCS, 1, Ctx(deps_met=True, phases=full)).state == LotState.QUALITY
+    assert decide(LotState.DOCS, 1,
+                  Ctx(deps_met=True, phases=frozenset({"docs"}))).kind == "close"

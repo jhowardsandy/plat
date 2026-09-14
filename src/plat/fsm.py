@@ -57,10 +57,16 @@ class Next:
     inputs: dict[str, Any] = field(default_factory=dict)
 
 
+ALL_PHASES = frozenset({"code", "review", "docs", "quality"})
+
+
 @dataclass(frozen=True)
 class Ctx:
     """Everything decide() is allowed to look at. Assembled by the caller."""
     deps_met: bool
+    # Which phases this plat runs. v0 ships code+review; docs and quality arrive
+    # with their providers. A phase with no configured role must not be reachable.
+    phases: frozenset[str] = ALL_PHASES
     verdict: dict[str, Any] | None = None
     gate: dict[str, Any] | None = None
     prev_fingerprints: frozenset[str] = frozenset()
@@ -147,16 +153,13 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
                             reason=f"oscillation: {sorted(repeated)} raised twice",
                             inputs={"repeated": sorted(repeated)})
             if advance(v, ctx.gate):
-                return Next("agent", LotState.DOCS, phase="docs",
-                            role=PHASE_ROLE["docs"], attempt=attempt,
-                            reason="review passed", inputs={"verdict": v})
+                return _after("review", ctx.phases, attempt, "review passed",
+                              {"verdict": v})
             return _retry(attempt, ctx, why="changes_requested",
                           extra={"findings": len(fingerprints(v))})
 
         case LotState.DOCS:
-            return Next("agent", LotState.QUALITY, phase="quality",
-                        role=PHASE_ROLE["quality"], attempt=attempt,
-                        resume_session=False, reason="docs complete")
+            return _after("docs", ctx.phases, attempt, "docs complete", {})
 
         case LotState.QUALITY:
             if ctx.verdict and ctx.verdict.get("verdict") == "pass":
@@ -170,6 +173,22 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
             return Next("wait", reason="awaiting a human")
 
     return Next("noop", reason="unreachable")
+
+
+_ORDER = ["code", "review", "docs", "quality"]
+
+
+def _after(done: str, phases: frozenset[str], attempt: int, why: str,
+           inputs: dict) -> Next:
+    """The next ENABLED phase after `done`, or close the lot if there is none."""
+    state_of = {"docs": LotState.DOCS, "quality": LotState.QUALITY,
+                "review": LotState.REVIEWING}
+    for nxt in _ORDER[_ORDER.index(done) + 1:]:
+        if nxt in phases:
+            return Next("agent", state_of[nxt], phase=nxt, role=PHASE_ROLE[nxt],
+                        attempt=attempt, resume_session=False, reason=why,
+                        inputs=inputs)
+    return Next("close", LotState.DONE, reason=f"{why}; no further phases enabled")
 
 
 def _code(attempt: int, resume: bool, why: str, extra: dict | None = None) -> Next:

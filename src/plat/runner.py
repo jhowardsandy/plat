@@ -8,11 +8,14 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+import subprocess
+
 from . import fsm, gates, ingest, prompts as P, roles as R, adapters
 from .config import Config
 from .decisions import record
 from .fsm import LotState
-from .models import Plat, Lot, Attempt, Verdict, Finding, Criterion, Session as SessionRow
+from .models import (Plat, Lot, Attempt, Verdict, Finding, Criterion,
+                     Session as SessionRow, Transcript)
 
 
 class Halt(Exception):
@@ -48,7 +51,8 @@ def build_ctx(db, plat, lot) -> fsm.Ctx:
         select(Finding).join(Attempt).where(
             Attempt.lot_id == lot.id, Attempt.n < lot.attempt)).all()
     return fsm.Ctx(
-        deps_met=True,                      # v0: one lot, no DAG
+        deps_met=True,
+        phases=frozenset((lot.config or {}).get("phases") or ["code", "review"]),                      # v0: one lot, no DAG
         verdict=_verdict_of(db, agent_a),
         gate=_verdict_of(db, gate_a),
         prev_fingerprints=frozenset(f.fingerprint for f in prev),
@@ -121,6 +125,14 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     return d.id
 
 
+def _worktree_fingerprint(wt: Path) -> str:
+    """HEAD plus dirty state. A reviewer that changes either has overstepped."""
+    def g(*a):
+        return subprocess.run(["git", *a], cwd=str(wt), capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL).stdout
+    return g("rev-parse", "HEAD").strip() + "|" + g("status", "--porcelain")
+
+
 def _prior_session(db, lot) -> str | None:
     a = db.scalars(select(Attempt).where(Attempt.lot_id == lot.id,
                                          Attempt.phase == "code")
@@ -166,6 +178,7 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     note = " (resuming session)" if sid else ""
     log(f"  {nxt.phase}: {role.provider}/{role.model}{note} ...")
 
+    before = _worktree_fingerprint(wt) if nxt.phase != "code" else None
     res = adapters.run(role, pf, wt)
     a.exit_code = res.exit_code
     a.cost_usd = res.cost_usd
@@ -175,6 +188,17 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     log(f"    exit={res.exit_code} {res.duration_s:.0f}s "
         f"${res.cost_usd:.2f}{'~' if res.cost_estimated else ''}")
 
+    if before is not None and _worktree_fingerprint(wt) != before:
+        record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
+               actor="system", actor_detail="runner.verify", kind="transition",
+               decision=f"{nxt.phase} agent MODIFIED the worktree",
+               rationale="a reviewer must not edit the code it reviews; "
+                         "the verdict is not trustworthy and the diff is contaminated",
+               inputs={"phase": nxt.phase},
+               apply=lambda: setattr(lot, "state", LotState.BLOCKED.value))
+        db.commit()
+        raise Halt(f"{nxt.phase} agent modified the worktree")
+
     if res.permission_denials:
         log(f"    !! {len(res.permission_denials)} permission denial(s) - "
             f"the agent was blocked, not merely unproductive")
@@ -182,6 +206,8 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     try:
         verdict = ingest.load_verdict(out, nxt.phase)
     except ingest.ContractError as e:
+        if res.stdout:
+            db.add(Transcript(attempt_id=a.id, body=res.stdout[:4_000_000]))
         d = record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
                    actor="system", actor_detail="ingest.validate", kind="transition",
                    decision="BLOCKED - termination contract not honoured",

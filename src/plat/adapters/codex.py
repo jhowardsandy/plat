@@ -17,6 +17,12 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
         head += ["resume", role.session_id]
     cmd = [*head, prompt_file.read_text(), "--json",
            "-c", f'sandbox_mode="{role.sandbox}"']
+    if role.sandbox == "workspace-write":
+        # The reviewer reads the repo but may write ONLY its verdict. A read-only
+        # sandbox cannot write at all -- it silently produces no verdict file --
+        # so confinement is expressed as a writable root, not as read-only.
+        out = str(prompt_file.parent).replace("\\", "/")
+        cmd += ["-c", f'sandbox_workspace_write.writable_roots=["{out}"]']
     # "default" means: let the CLI pick. Which models an account can reach varies,
     # and a hardcoded name fails with a 400 four seconds in.
     if role.model and role.model != "default":
