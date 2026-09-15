@@ -57,9 +57,17 @@ PENDING ──deps met──▶ CODING ──▶ GATE ──▶ REVIEWING ──
 ```python
 advance = verdict == "pass"
           and all criteria met
-          and gate.tests_failed == 0
+          and gate.exit_code == 0        # the runner's own verdict
           and gate.diff_files > 0
 ```
+
+**Pass/fail comes from the exit code, never from a parsed count.** Counts are
+scraped text and are only for reporting and a converge baseline. A bad parse once
+read vitest's `Test Files  85 passed` as the test count and matched `2 errors` in
+console noise, failing a lot three times whose suite exited 0 the whole way. A
+runner's exit status is unambiguous; its output format is not — and when they
+disagree, the count is what is wrong. A gate that cannot read counts at all says
+so (`counted: false`) rather than claiming zero.
 
 Where genuine nuance is needed, a `router` role answers **one** narrow question returning an enum. Never "read this and decide what to do."
 
@@ -178,6 +186,21 @@ dropped. Gemini has no equivalent and ignores it rather than inventing one.
 
 **Cost.** Claude reports `total_cost_usd` exactly. Codex and Gemini report only tokens, so their cost is estimated and marked `cost_estimated`, shown as `~`. Budget ceilings are therefore approximate on those providers — set them conservatively.
 
+### Reviewing without a plat
+
+`plat review [repo] --test "<cmd>"` runs the reviewer alone against a branch you
+already wrote — no plan, no worktree, no coder, one verdict, about a dollar.
+
+It is the cheapest useful thing here, and it earns that on the evidence: on both of
+Plat's first full runs the coder produced something plausible that passed the tests
+and the *reviewer* caught the defect. This is that half, on work you did yourself.
+
+Findings join the same corpus (a review is a plat with `kind='review'`, so it stays
+out of the ledger), which is what makes **prior art** work: a review reads what has
+already been found in that repo, and whether it stuck. A finding *dismissed* with a
+reason is the most valuable row there — it is what stops a reviewer re-raising a
+settled point.
+
 ## 6. Gates
 
 The gate is per-lot configuration, not inference:
@@ -234,8 +257,14 @@ Three renderers, one source. `v_live_lots` computes the derived signals — `sta
 | | for |
 |---|---|
 | `plat status [--watch]` | glanceable, in the terminal you are already in |
-| `plat top` | drill-in, live agent log, keys that act |
+| `plat top` | drill-in, live agent log, keys that act (`l` switches log/events, `o` reopens a blocked lot) |
 | `plat ui` → Grafana :3033 | reading: history, the decision record at width, the archive |
+
+**The live log is narration, not protocol.** Each adapter turns its own stream into
+readable lines — an agent's prose and the tools it reached for, not rate-limit
+envelopes and tool-call JSON. Claude runs with `--output-format stream-json` rather
+than `json`, because `json` buffers the whole run and emits one object at exit:
+there is nothing to tail for the hour that matters.
 
 **`stale` is relative, not a timeout.** A 95-minute indexing run is healthy; a 12-minute review is probably wedged. The threshold is three times the median duration of that phase in that repo, floored at ten minutes.
 
@@ -264,6 +293,34 @@ $ plat history --awaiting
 A delivered plat leaves the live board, because it is not in flight, and keeps a
 row in history, because it is waiting on a person. `plat close` records the
 closing as **your** decision, marked irreversible, with whatever reason you give.
+
+### What the ticket says
+
+Plat's lifecycle and your issue tracker's are different facts and neither implies
+the other. Plat knew only its own, which is how an invented anchor once collided
+with a real in-progress ticket belonging to someone else's work.
+
+```toml
+[tracker]
+cmd = "my-ticket-lookup {anchor}"   # prints {"key","status","summary","url"}
+```
+
+Tracker-agnostic on purpose — whether that command talks to Jira, Linear, GitHub or
+a spreadsheet is not Plat's business. `examples/` has a Jira one. Then `plat sync`
+refreshes it, `plat history` shows both lifecycles side by side, and `plat plan`
+looks the anchor up before using it:
+
+```
+DEV-3910   plat=delivered   ticket=To Do       ← work finished, ticket never moved
+```
+
+The collision check **warns and proceeds**. Picking up someone else's ticket is
+fine when they are happy for you to — reassigning it is the courtesy. The warning
+exists so that it is a decision rather than an accident.
+
+"Could not tell" and "no such ticket" are deliberately different answers: an
+unreachable tracker returns unknown, which never reads as a collision and never
+blocks planning.
 
 ## 8b. Being told
 
@@ -311,6 +368,17 @@ plat probe         # L3 do the real CLIs honour the contract, and are they hones
 **L3** is the honesty probe: a repo whose tests cannot pass, and a check on whether the agent says so. Learning that an agent lies costs fifty cents there and a whole plat otherwise.
 
 **L4**, unimplemented and worth doing: a *shadow run* against a ticket you have already delivered. Check out the parent commit, run Plat, and diff against what actually shipped. It is the only test that vets the output rather than the machinery. (One caveat: the real fix is still in `git log --all`, so an agent that greps history can cheat.)
+
+### Configuring it
+
+`plat setup` is the guided way in: it probes which CLIs are installed, calls each
+candidate model once to find what your **account** can reach, and counts the repos
+under the workspace root you give it. Installed is not the same as permitted — a
+correctly-spelled model can be refused by the plan behind it, four seconds in.
+
+Phase **order** is deliberately not configurable. `code → review → docs → quality`
+is semantic rather than a preference: you cannot review before you code. What you
+choose is which of them run, and that is `phases` in `config.toml` or per-plat.
 
 ## 10. What is not built yet
 

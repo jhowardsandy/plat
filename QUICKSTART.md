@@ -30,17 +30,24 @@ docker compose -f docker-compose.plat.yml --profile db up -d
 
 ```bash
 uv tool install --editable .
+plat setup
+```
+
+`setup` walks you through it and **checks as it goes**: which agent CLIs are
+installed, which models your account can actually reach (one trivial call each —
+installed is not the same as permitted), who codes and who reviews, an effort
+preset, which phases run, and where your repositories are. It prints what it will
+write before writing it, and keeps a `.bak`.
+
+Then create the schema:
+
+```bash
 plat init
 ```
 
-`init` creates the tables and views, and writes `~/.plat/config.toml`. **Open it** — `workspace_root` must point at the directory your repositories live under, because Plat resolves worktrees to `<workspace_root>/.worktrees/`.
-
-```toml
-database_url   = "postgresql+psycopg://plat:plat@localhost:5432/plat"
-workspace_root = "/Users/you/src"
-```
-
-Re-run `plat init` after editing; it is idempotent.
+Both are re-runnable. If you would rather configure by hand, `~/.plat/config.toml`
+and `~/.plat/roles.yaml` are plain files — `workspace_root` is the one that matters
+most, since worktrees resolve to `<workspace_root>/.worktrees/`.
 
 ## 4. Check your agents honour the contract
 
@@ -161,6 +168,20 @@ system  14:34  fsm.close       lot DONE
 ```
 
 Blue is observed by the supervisor. Amber is self-reported by an agent and weaker evidence. Red is you.
+
+## 8b. Reviewing something you wrote yourself
+
+You do not need a whole plat to get cross-model review. On a branch you wrote:
+
+```bash
+plat review --test "pytest -q"
+```
+
+One reviewer, one diff, one verdict — no plan, no worktree, no coder, about a
+dollar. It reads past findings for that repo first, so it will not re-raise
+something already settled. On its first real use it found that a merged-looking
+change was **inert in every deployed environment**, which the plat that wrote the
+code could not see because its scope was one file.
 
 ## 9. Then what
 

@@ -39,3 +39,18 @@ def test_cli_exposes_both_a_live_and_an_archive_view():
     from plat.cli import app
     names = {c.name or c.callback.__name__ for c in app.registered_commands}
     assert {"status", "history", "show"} <= names
+
+
+def test_every_command_is_documented_somewhere():
+    """Drift the other way: a command nobody wrote down is a command nobody finds.
+    review, setup and sync all shipped undocumented."""
+    import re
+    from pathlib import Path
+    from plat.cli import app
+    root = Path(__file__).parent.parent
+    blob = "\n".join((root / f).read_text() for f in
+                     ("README.md", "QUICKSTART.md", "docs/GUIDE.md"))
+    real = {c.name or c.callback.__name__ for c in app.registered_commands}
+    mentioned = set(re.findall(r"`?plat ([a-z_]+)", blob))
+    undocumented = real - mentioned
+    assert not undocumented, f"undocumented commands: {sorted(undocumented)}"

@@ -52,10 +52,17 @@ Requires Python 3.12+, Postgres, Docker (for the dashboard), and at least one ag
 
 ```bash
 uv tool install --editable .     # puts `plat` on PATH
-plat init                        # schema, views, config.toml, roles.yaml
+plat setup                       # guided: probes what your account can reach, then configures
+plat init                        # schema and views
 plat skills                      # links /plat-up and /plat-run into ~/.claude/skills
 plat probe                       # does each agent CLI honour the contract, and is it honest?
+plat demo                        # seed a board so the first `plat ui` is not empty
 ```
+
+`plat setup` checks before it asks. It probes which CLIs are installed, calls each
+candidate model once to see what your **account** can actually reach, and counts the
+repositories under the workspace root you give it — because a wizard that only asks
+questions will happily record an answer that cannot work.
 
 **[QUICKSTART.md](QUICKSTART.md)** takes you from nothing to a finished lot. **[docs/GUIDE.md](docs/GUIDE.md)** is the full reference.
 
@@ -63,13 +70,16 @@ plat probe                       # does each agent CLI honour the contract, and 
 
 | | |
 |---|---|
-| `plat init` · `plat skills` · `plat probe` | set up and verify |
+| `plat setup` · `plat init` · `plat skills` · `plat probe` | configure and verify |
+| `plat draft <anchor> --ticket f.md` | turn a ticket into a draft `plat.yaml` |
 | `plat plan <spec.yaml>` | cut worktrees, smoke the gate, stage the rows |
 | `plat start <anchor>` | run to completion or to a human gate |
 | `plat status [--watch]` · `plat top` | the monitor, glanceable or operable |
 | `plat show [anchor]` | the decision record |
 | `plat history [-m]` | delivered plats (`-m` for markdown ledger rows) |
-| `plat pause` · `plat reopen` | the control surface |
+| `plat review [repo]` | **cross-model review of a branch you already wrote** — no plan, no worktree, no coder |
+| `plat sync` · `plat close` | what the issue tracker says; mark a delivered plat shipped |
+| `plat pause` · `plat reopen` · `plat demo` | the control surface, and seeded data |
 | `plat ui` | the Grafana dashboard on :3033 |
 
 ## Which models
