@@ -64,3 +64,30 @@ def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None) -> AgentResult:
     rate_in, rate_out = RATES.get(role.model, RATES["_default"])
     res.cost_usd = (res.tokens_in / 1e6) * rate_in + (res.tokens_out / 1e6) * rate_out
     return res
+
+
+def narrate(chunk: str) -> list[str]:
+    """Readable lines from codex's event stream."""
+    out: list[str] = []
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = ev.get("item") or {}
+        kind = item.get("type") or ev.get("type")
+        if kind == "agent_message" and item.get("text", "").strip():
+            out.append(item["text"].strip())
+        elif kind == "command_execution":
+            out.append(f"  $ {str(item.get('command', ''))[:110]}")
+        elif kind == "error":
+            out.append(f"  !! {str(item.get('message') or ev.get('message'))[:140]}")
+        elif ev.get("type") == "turn.completed":
+            u = ev.get("usage") or {}
+            out.append(f"— turn complete ({u.get('output_tokens', 0)} output tokens)")
+        elif ev.get("type") == "turn.failed":
+            out.append(f"  !! turn failed: {str(ev.get('error'))[:140]}")
+    return out

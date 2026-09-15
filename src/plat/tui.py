@@ -38,13 +38,14 @@ class PlatTop(App):
     #left  { width: 3fr; border-right: solid $panel; }
     #right { width: 4fr; }
     #detail { height: 1fr; padding: 0 1; overflow-y: auto; }
-    #logs  { height: 1fr; border-top: solid $panel; }
+    #logshdr { height: 1; padding: 0 1; background: $panel; color: $text-muted; }
+    #logs  { height: 1fr; }
     DataTable { height: 1fr; }
     """
     BINDINGS = [
         Binding("q", "quit", "quit"),
         Binding("p", "pause", "pause/resume"),
-        Binding("o", "reopen", "reopen lot"),
+        Binding("o", "reopen", "reopen blocked lot"),
         Binding("l", "toggle_logs", "logs/events"),
         Binding("r", "refresh", "refresh"),
     ]
@@ -69,6 +70,7 @@ class PlatTop(App):
                 yield DataTable(id="lots", cursor_type="row", zebra_stripes=True)
             with Vertical(id="right"):
                 yield Static(id="detail")
+                yield Static(id="logshdr")
                 yield RichLog(id="logs", wrap=True, markup=False, max_lines=800)
         yield Footer()
 
@@ -193,6 +195,9 @@ class PlatTop(App):
 
     def _stream(self) -> None:
         log = self.query_one("#logs", RichLog)
+        which = "agent log" if self.show_logs else "event stream"
+        self.query_one("#logshdr", Static).update(
+            f" {which}   [l] to switch" + (f"   ·  lot {self.sel}" if self.sel else ""))
         if self.show_logs and self.sel is not None:
             rows = self._q(
                 "SELECT c.id, c.body FROM log_chunks c JOIN attempts a ON a.id = c.attempt_id "
@@ -255,7 +260,11 @@ class PlatTop(App):
         with DB.session() as s:
             lot = s.get(Lot, self.sel)
             if lot.state != "BLOCKED":
-                self.notify(f"{lot.key} is {lot.state}, not BLOCKED", severity="warning")
+                msg = (f"[o] {lot.key} is {lot.state}, not BLOCKED — reopen only "
+                       f"applies to a lot that stopped for a human. Reopening a "
+                       f"running lot would race the process that owns it.")
+                self.notify(msg, severity="warning")
+                self.query_one("#logs", RichLog).write(msg)
                 return
             record(s, plat_id=lot.plat_id, lot_id=lot.id, actor="human",
                    actor_detail="plat top", kind="override",
@@ -264,7 +273,9 @@ class PlatTop(App):
                              "use `plat reopen --note` when the reason matters",
                    alternatives=["leave blocked"], inputs={"was": "BLOCKED"},
                    apply=lambda: setattr(lot, "state", "CODING"))
-            self.notify(f"{lot.key} reopened — `plat start {lot.plat_id}` to continue")
+            msg = f"[o] {lot.key} reopened to CODING — `plat start` to continue"
+            self.notify(msg)
+            self.query_one("#logs", RichLog).write(msg)
 
 
 def run(anchor: str | None = None, all_: bool = False) -> None:

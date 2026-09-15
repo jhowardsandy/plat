@@ -10,7 +10,9 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
     cmd = [
         "claude", "-p", prompt_file.read_text(),
         "--model", role.model,
-        "--output-format", "json",
+        # stream-json, not json: `json` buffers the entire run and emits one
+        # object at exit, so there is nothing to tail for the hour that matters.
+        "--output-format", "stream-json", "--verbose",
         "--permission-mode", role.permission_mode,
         "--add-dir", str(cwd),
     ]
@@ -32,11 +34,20 @@ def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None) -> AgentResult:
     rc, out, err, dt = spawn(build(role, prompt_file, cwd), cwd,
                              role.timeout_s, on_chunk=on_chunk)
     res = AgentResult(ok=(rc == 0), exit_code=rc, duration_s=dt, stdout=out, stderr=err)
-    try:
-        d = json.loads(out)
-    except Exception:
+    d = None
+    for line in out.splitlines():           # NDJSON; the result is the last event
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "result" or "total_cost_usd" in ev:
+            d = ev
+    if d is None:
         res.ok = False
-        res.error = "claude did not return parseable JSON"
+        res.error = "claude emitted no result event"
         return res
     res.session_id = d.get("session_id")
     res.cost_usd = float(d.get("total_cost_usd") or 0.0)
@@ -50,3 +61,35 @@ def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None) -> AgentResult:
         res.ok = False
         res.error = f"claude reported is_error (subtype={d.get('subtype')})"
     return res
+
+
+def narrate(chunk: str) -> list[str]:
+    """Turn a slice of the stream into lines a person can follow.
+
+    The raw stream is protocol, not narration: rate-limit envelopes, tool-call
+    JSON, a 3KB result object. Storing that as the "live log" gave a pane nobody
+    could read.
+    """
+    out: list[str] = []
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        kind = ev.get("type")
+        if kind == "assistant":
+            for block in (ev.get("message") or {}).get("content") or []:
+                if block.get("type") == "text" and block.get("text", "").strip():
+                    out.append(block["text"].strip())
+                elif block.get("type") == "tool_use":
+                    inp = block.get("input") or {}
+                    hint = (inp.get("command") or inp.get("file_path")
+                            or inp.get("pattern") or inp.get("description") or "")
+                    out.append(f"  · {block.get('name')} {str(hint)[:100]}")
+        elif kind == "result":
+            out.append(f"— finished in {ev.get('duration_ms', 0) / 1000:.0f}s, "
+                       f"${ev.get('total_cost_usd', 0):.2f}")
+    return out

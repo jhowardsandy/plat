@@ -301,15 +301,23 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
 
     before = _worktree_fingerprint(wt) if nxt.phase != "code" else None
     seq = itertools.count()
+    residue = [""]          # a chunk can end mid-line; the tail belongs to the next
 
-    def _chunk(text_: str):
+    def _chunk(raw: str):
         # Own session, own transaction. Writing through the runner's session would
         # keep every chunk inside its open transaction until the agent finished --
         # which is exactly the window a live tail exists to cover.
         from .db import session as _s
+        buf = residue[0] + raw
+        keep = "" if buf.endswith("\n") else buf[buf.rfind("\n") + 1:]
+        residue[0] = keep
+        lines = adapters.narrate(role.provider, buf[:len(buf) - len(keep)])
+        if not lines:
+            return          # protocol chatter with nothing a person would read
         try:
             with _s() as s2:
-                s2.add(LogChunk(attempt_id=a.id, seq=next(seq), body=text_))
+                s2.add(LogChunk(attempt_id=a.id, seq=next(seq),
+                                body="\n".join(lines)))
         except Exception:
             pass
 

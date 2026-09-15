@@ -103,3 +103,14 @@ async def test_highlight_events_from_a_rebuild_are_ignored():
         app.on_data_table_row_highlighted(
             type("E", (), {"row_key": type("K", (), {"value": "9"})()})())
         assert app.sel == 7 and app._last_log_id == 123, "a rebuild moved the selection"
+
+
+async def test_the_log_pane_says_which_stream_it_is_showing():
+    """`l` toggles two panes that looked identical and unlabelled."""
+    app = await _boot()
+    async with app.run_test() as pilot:
+        await pilot.pause(); app.refresh_all(); await pilot.pause()
+        hdr = str(app.query_one("#logshdr", Static).content)
+        assert "agent log" in hdr
+        await pilot.press("l"); app.refresh_all(); await pilot.pause()
+        assert "event stream" in str(app.query_one("#logshdr", Static).content)
