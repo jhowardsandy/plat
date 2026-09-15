@@ -136,6 +136,12 @@ def test_table_blocks_keep_their_own_keys(tmp_path):
 
 def test_sources_record_where_each_value_came_from(monkeypatch, tmp_path):
     from plat.config import load
+    # Clear inherited PLAT_* first: CI sets PLAT_DATABASE_URL as a job env var,
+    # and env correctly beats the file — so a test that assumes a clean
+    # environment passes locally and fails there, which is CI doing its job.
+    for var in ("PLAT_DATABASE_URL", "PLAT_BROKER_URL", "PLAT_PHASES",
+                "PLAT_MAX_ATTEMPTS", "PLAT_STALE_AFTER_S", "PLAT_ROLES"):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("PLAT_HOME", str(tmp_path))
     monkeypatch.setenv("PLAT_WORKSPACE", "/from/env")
     (tmp_path / "config.toml").write_text('database_url = "from-file"\n')
