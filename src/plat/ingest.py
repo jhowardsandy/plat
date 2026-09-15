@@ -25,7 +25,8 @@ class ContractError(RuntimeError):
 
 
 def _validator(phase: str) -> Draft202012Validator:
-    name = {"code": "code", "review": "review", "quality": "review"}.get(phase, phase)
+    name = {"code": "code", "review": "review", "quality": "review",
+            "scout": "scout"}.get(phase, phase)
     return Draft202012Validator(json.loads((SCHEMAS / f"{name}.schema.json").read_text()))
 
 

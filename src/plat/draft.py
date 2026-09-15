@@ -111,8 +111,38 @@ def unverifiable(spec: dict) -> list[str]:
     return [c.get("id", "?") for c in (spec.get("criteria") or []) if not c.get("verify")]
 
 
+def scout(db, cfg: Config, *, anchor: str, ticket: str, log=print) -> dict:
+    """Cheap reconnaissance: which repos, is it specified, does it exist, is it
+    measurable. Four facts, so a person can choose the shape before paying to plan
+    it in detail."""
+    from . import ingest
+    repos = discover_repos(cfg.workspace_root)
+    if not repos:
+        raise DraftError(f"no git repositories under {cfg.workspace_root}")
+    out = home() / "drafts" / anchor
+    out.mkdir(parents=True, exist_ok=True)
+    prompt = ((P.PACKS / "scout.md").read_text()
+              .replace("{ticket}", ticket.strip() or "(no ticket text supplied)")
+              .replace("{repos}", "\n".join(f"- {r}" for r in repos))
+              .replace("{out_dir}", str(out)))
+    pf = out / "scout-prompt.md"; pf.write_text(prompt)
+
+    role = R.bind(cfg.roles(), "scout", 1)
+    role.extra_dirs = [str(cfg.workspace_root)]
+    log(f"  reconnaissance: {role.provider}/{role.model} ...")
+    res = adapters.run(role, pf, out)
+    log(f"    {res.duration_s:.0f}s  ${res.cost_usd:.2f}"
+        f"{'~' if res.cost_estimated else ''}")
+    info = ingest.load_verdict(out, "scout")
+    # A repo the scout named but that does not exist would send the whole run into
+    # the wrong tree, so drop it here rather than at worktree time.
+    info["repos"] = [r for r in info.get("repos") or []
+                     if (cfg.workspace_root / r / ".git").exists()]
+    return info
+
+
 def run(db, cfg: Config, *, anchor: str, ticket: str, role_name: str = "planner",
-        log=print) -> tuple[Path, dict, list[str]]:
+        shape: str = "", log=print) -> tuple[Path, dict, list[str]]:
     repos = discover_repos(cfg.workspace_root)
     if not repos:
         raise DraftError(f"no git repositories found under {cfg.workspace_root} — "
@@ -121,10 +151,19 @@ def run(db, cfg: Config, *, anchor: str, ticket: str, role_name: str = "planner"
 
     out = home() / "drafts" / anchor
     out.mkdir(parents=True, exist_ok=True)
+    context = prior_context(db)
+    if shape:
+        # Chosen by a person who can see what a planner cannot — which repo is
+        # mid-refactor, what ships Thursday. Stage 2 expands it rather than
+        # re-deciding it.
+        context += (f"\n## The shape already chosen\n\n{shape}\n\n"
+                    "A person picked this knowing things you do not. Produce that "
+                    "shape. If you believe it is wrong, produce it anyway and say "
+                    "why in plan.md.\n")
     prompt = ((P.PACKS / "plan.md").read_text()
               .replace("{ticket}", ticket.strip() or "(no ticket text supplied)")
               .replace("{repos}", "\n".join(f"- {r}" for r in repos))
-              .replace("{prior_art}", prior_context(db))
+              .replace("{prior_art}", context)
               .replace("{out_dir}", str(out))
               .replace("{anchor}", anchor))
     pf = out / "prompt.md"; pf.write_text(prompt)

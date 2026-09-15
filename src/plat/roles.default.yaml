@@ -26,6 +26,15 @@ roles:
     allowed_tools: [Read, Glob, Grep, Bash, Write]
     effort: max
 
+  # Cheap reconnaissance for `plat shape`: four facts, fast. A thorough answer
+  # here costs more than the decision it informs.
+  scout:
+    provider: claude
+    model: sonnet
+    permission_mode: acceptEdits
+    allowed_tools: [Read, Glob, Grep, Bash, Write]
+    effort: medium
+
   coder:
     provider: claude
     model: sonnet
