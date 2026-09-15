@@ -50,6 +50,135 @@ def _resolve(s, anchor: str | None) -> Plat:
 
 
 @app.command()
+def setup(
+    probe_models: bool = typer.Option(True, "--probe/--no-probe",
+                  help="try each candidate model once to see what this account can reach"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="take every default"),
+):
+    """Walk through configuring Plat. Re-runnable; nothing is overwritten unseen.
+
+    It discovers before it asks: which CLIs are installed, which models your
+    account can actually reach, and which repositories exist. A wizard that only
+    asks questions will happily record an answer that cannot work.
+    """
+    from rich.prompt import Confirm, Prompt
+    from . import setup as S
+    from .config import config_path, write_default_config, home
+    from .draft import discover_repos
+
+    def ask(q, default, choices=None):
+        if yes:
+            return default
+        return Prompt.ask(q, default=str(default),
+                          choices=[str(x) for x in choices] if choices else None)
+
+    cfg = load()
+    c.print("[bold]1. agent CLIs[/bold]")
+    have = S.installed()
+    for p, ok in have.items():
+        c.print(f"  {p:<8} {'[green]installed[/green]' if ok else '[dim]not installed[/dim]'}")
+    present = [p for p, ok in have.items() if ok]
+    if not present:
+        c.print("[red]no agent CLI found[/red] — install at least one of "
+                "claude, codex, gemini")
+        raise typer.Exit(1)
+
+    c.print("\n[bold]2. which models this account can reach[/bold]")
+    if probe_models:
+        c.print("  [dim]one trivial call each, a few cents — installed is not the same "
+                "as permitted, and finding that out mid-plat is expensive[/dim]")
+        avail = S.discover_models(present, log=c.print)
+    else:
+        avail = {p: S.CANDIDATES[p] for p in present}
+        c.print("  [dim]skipped — assuming every candidate works[/dim]")
+    usable = {p: m for p, m in avail.items() if m}
+    if not usable:
+        c.print("[red]no reachable models[/red] — check your CLI logins")
+        raise typer.Exit(1)
+
+    c.print("\n[bold]3. who writes and who reviews[/bold]")
+    c.print("  [dim]A model is blind to its own failure modes and will rationalise "
+            "its own code. Having a different lineage review it is the single "
+            "highest-value choice here.[/dim]")
+    cp = ask("  coder provider", "claude" if "claude" in usable else list(usable)[0],
+             list(usable))
+    cm = ask("  coder model", usable[cp][0], usable[cp])
+    others = [p for p in usable if p != cp] or [cp]
+    rp = ask("  reviewer provider", others[0], list(usable))
+    rm = ask("  reviewer model", usable[rp][0], usable[rp])
+    if rp == cp:
+        c.print("  [yellow]same provider reviewing its own work[/yellow] — it will "
+                "share the blind spots that produced the code")
+
+    c.print("\n[bold]4. how hard to try[/bold]")
+    for k, v in S.PRESETS.items():
+        c.print(f"  [cyan]{k:<9}[/cyan] {v['label']}")
+    preset = ask("  preset", "balanced", list(S.PRESETS))
+
+    c.print("\n[bold]5. phases[/bold]")
+    c.print("  [dim]Order is fixed — code, review, docs, quality — because it is "
+            "semantic, not a preference. You choose which run.[/dim]")
+    phases = ["code", "review"]
+    if yes or Confirm.ask("  add a second 'quality' review pass?", default=False):
+        phases.append("quality")
+    if "gemini" not in usable:
+        c.print("  [dim]docs needs a gemini adapter, which is not implemented — off[/dim]")
+
+    c.print("\n[bold]6. where your repositories are[/bold]")
+    ws = Path(ask("  workspace root", cfg.workspace_root)).expanduser()
+    repos = discover_repos(ws) if ws.exists() else []
+    c.print(f"  {len(repos)} repo(s) found" + (f" — e.g. {', '.join(repos[:3])}" if repos
+            else "  [yellow]none: worktrees resolve under here, so check the path[/yellow]"))
+
+    c.print("\n[bold]7. being told when a run needs you[/bold]")
+    handlers = ["desktop"] if (yes or Confirm.ask(
+        "  desktop notification when a lot blocks?", default=True)) else []
+
+    # ---- write it ----
+    c.print(f"\n[bold]about to write[/bold]  [dim](PLAT_HOME={home()})[/dim]")
+    c.print(f"  {config_path()}")
+    c.print(f"  {cfg.roles_path}  [dim]— rewritten from your current values; "
+            f"comments are not preserved, and the annotated reference ships as "
+            f"roles.default.yaml[/dim]")
+    if not yes and not Confirm.ask("  write these?", default=True):
+        c.print("[dim]nothing written[/dim]")
+        raise typer.Exit(0)
+    write_default_config()
+    body = config_path().read_text()
+    body = _retoml(body, "workspace_root", f'"{ws}"')
+    body = _retoml(body, "handlers", json.dumps(handlers))
+    config_path().write_text(body)
+
+    roles_path = cfg.roles_path
+    if not roles_path.exists():
+        # Start from the shipped defaults so planner, documenter and the rest
+        # survive; the wizard only overrides coder and reviewer.
+        shutil.copy(Path(__file__).parent / "roles.default.yaml", roles_path)
+    base = yaml.safe_load(roles_path.read_text())
+    backup = roles_path.with_suffix(".yaml.bak")
+    shutil.copy(roles_path, backup)
+    S.write_yaml(roles_path, S.build_roles(base, cp, cm, rp, rm, preset, phases))
+    body = _retoml(config_path().read_text(), "phases", json.dumps(phases))
+    config_path().write_text(body)
+
+    c.print(f"\n[green]written[/green] {config_path()}")
+    c.print(f"[green]written[/green] {roles_path}")
+    c.print(f"  coder     {cp}/{cm}   reviewer  {rp}/{rm}   preset {preset}")
+    c.print(f"  phases    {', '.join(phases)}")
+    c.print("\n[bold]next[/bold]")
+    c.print("  plat init     [dim]create the schema[/dim]")
+    c.print("  plat probe    [dim]do these agents honour the contract, and are they "
+            "honest about a failing suite?[/dim]")
+    c.print("  plat demo     [dim]seed a board so the UI is not empty[/dim]")
+
+
+def _retoml(body: str, key: str, value: str) -> str:
+    import re
+    pat = re.compile(rf"^(\s*{key}\s*=\s*).*$", re.M)
+    return pat.sub(lambda m: m.group(1) + value, body, count=1)
+
+
+@app.command()
 def init():
     """Create the schema and install the views. Idempotent."""
     for s in DB.init():
@@ -355,7 +484,7 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
             # fall below; without it, deleting tests reads as progress.
             gate_cfg = {**g, "baseline_passed": sm.tests_passed if sm.counted else 0}
             cfgd = {"gate": gate_cfg, "plan": L.get("plan", ""),
-                    "phases": d.get("phases", ["code", "review"]),
+                    "phases": d.get("phases") or cfg.phases,
                     "plat_map": d.get("plat_map", ""), "branch": branch,
                     "mode": L.get("mode", "attempt")}
             if cfgd["mode"] == "converge":

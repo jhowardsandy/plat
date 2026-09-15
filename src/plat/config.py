@@ -29,6 +29,8 @@ DEFAULTS = {
     "workspace_root": str(Path.home() / "src"),
     "stale_after_s": 600,
     "max_attempts": 3,
+    # Default phases for a plat that does not name its own.
+    "phases": ["code", "review"],
     # Notify YOU when a run needs you. Plat never announces to other people.
     "notify": {"enabled": True, "handlers": ["desktop"],
                "on": ["blocked", "delivered", "budget"]},
@@ -55,6 +57,12 @@ stale_after_s = {stale_after_s}
 
 # Code -> review -> code cycles before a lot stops and asks for a human.
 max_attempts = {max_attempts}
+
+# Which phases a plat runs when its own spec does not say. The ORDER is fixed --
+# code, review, docs, quality -- because it is semantic, not a preference: you
+# cannot review before you code. You choose which of them run.
+#   docs needs a gemini adapter, which is not implemented yet.
+phases = {phases}
 
 # Plat interrupts YOU when a run needs you, and never announces to anyone else --
 # a pull request, a ticket transition or a team-channel post speaks in your name
@@ -94,6 +102,7 @@ class Config:
     tracker: dict = field(default_factory=dict)          # per-install uuid; keeps findings mergeable across installs
     stale_after_s: int = 600
     max_attempts: int = 3
+    phases: list = field(default_factory=lambda: ["code", "review"])
 
     @property
     def worktrees_root(self) -> Path:
@@ -117,7 +126,12 @@ def write_default_config(**overrides) -> Path:
     """Write config.toml if absent. Never overwrites an existing one."""
     p = config_path()
     if not p.exists():
-        p.write_text(CONFIG_TEMPLATE.format(**{**DEFAULTS, **overrides}))
+        # Substitute by replace, not .format(): the template documents a tracker
+        # command containing a literal {anchor}, and .format() tried to resolve it.
+        body = CONFIG_TEMPLATE
+        for k, v in {**DEFAULTS, **overrides}.items():
+            body = body.replace("{" + k + "}", str(v))
+        p.write_text(body)
     return p
 
 
@@ -150,6 +164,7 @@ def load() -> Config:
         origin_id=origin.read_text().strip(),
         notify=(f.get("notify") or DEFAULTS["notify"]),
         tracker=(f.get("tracker") or {}),
+        phases=list(f.get("phases") or DEFAULTS["phases"]),
         stale_after_s=int(pick("stale_after_s", "PLAT_STALE_AFTER_S")),
         max_attempts=int(pick("max_attempts", "PLAT_MAX_ATTEMPTS")),
     )
