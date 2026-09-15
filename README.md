@@ -73,6 +73,7 @@ questions will happily record an answer that cannot work.
 | | |
 |---|---|
 | `plat setup` · `plat init` · `plat skills` · `plat probe` | configure and verify |
+| `plat shape <anchor> --ticket f.md` | **cheap recon, then pick how to divide the work** — before paying to plan it |
 | `plat draft <anchor> --ticket f.md` | turn a ticket into a draft `plat.yaml` |
 | `plat plan <spec.yaml>` | cut worktrees, smoke the gate, stage the rows |
 | `plat start <anchor>` | run to completion or to a human gate |
@@ -104,6 +105,19 @@ reviewer.correctness:
 ```
 
 Adapters ship for **Claude Code**, **Codex** and **Gemini**. All three are driven headlessly behind one uniform contract, so swapping a role's provider is a config change.
+
+## A note on the dollar figures
+
+Plat shells out to CLIs you are already logged into, so on a Claude or ChatGPT
+subscription the work draws against your plan rather than billing per token. The
+costs shown everywhere — `plat status`, `plat history`, budget ceilings, the
+`plat shape` menu — are **API-equivalent cost**: what the run would have cost at
+API rates, which is a different thing from money leaving your account.
+
+They are still the right number to reason with: it is the honest relative measure
+between two shapes, a good proxy for how much of your plan a run consumes, and the
+actual bill if you point Plat at API keys. Codex and Gemini are estimated from
+token counts rather than reported, and show a `~`.
 
 ## Status
 

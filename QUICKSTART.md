@@ -114,6 +114,23 @@ Two rules that decide whether this works:
 - **An acceptance criterion that cannot be checked cannot gate anything.** Give every one a `verify` command if a command can exist.
 - **The gate must already be green on the base commit.** If your full suite is red on main — integration tests wanting a broker, a database, a VPN — narrow the gate to what genuinely passes and say so in `plan`.
 
+## 5b. Or let it propose the shape
+
+Rather than writing the spec yourself:
+
+```bash
+plat shape DEV-1234 --ticket ticket.md
+```
+
+Cheap reconnaissance — which repos are really involved, is the ticket specified
+enough to decompose, does the code already exist — then a menu of ways to divide
+the work with cost and time estimates drawn from what runs here have actually
+cost. Pick one and it plans that shape in detail.
+
+Those dollar figures are **API-equivalent cost**. On a Claude or ChatGPT
+subscription the work draws against your plan rather than billing per token; the
+number is there to compare options honestly, not to predict an invoice.
+
 ## 6. Plan it
 
 ```bash

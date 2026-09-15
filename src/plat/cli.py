@@ -421,6 +421,79 @@ def _probe_model(roles_cfg, prov):
 
 
 @app.command()
+def shape(
+    anchor: str = typer.Argument(..., help="DEV-1234, or fix_some-thing"),
+    ticket: Path = typer.Option(None, "--ticket", "-t", help="file, or '-' for stdin"),
+    text_: str = typer.Option(None, "--text"),
+    pick: str = typer.Option(None, "--pick", help="skip the prompt: split|single|converge|review|spike"),
+):
+    """Choose how to shape the work before paying to plan it in detail.
+
+    Cheap reconnaissance, a menu with estimates from what runs here have actually
+    cost, then the expensive planning pass spent only on the shape you chose.
+    """
+    import sys
+
+    from rich.prompt import Prompt
+
+    from . import draft as _draft
+    from . import shapes as _sh
+    cfg = load()
+    if text_:
+        body = text_
+    elif ticket and str(ticket) == "-":
+        body = sys.stdin.read()
+    elif ticket:
+        body = Path(ticket).read_text()
+    else:
+        c.print("[red]give the ticket[/red]: --ticket <file>, --ticket - , or --text")
+        raise typer.Exit(2)
+
+    with DB.session() as s:
+        try:
+            recon = _draft.scout(s, cfg, anchor=anchor, ticket=body, log=c.print)
+        except (_draft.DraftError, ingest.ContractError) as e:
+            c.print(f"[red]{e}[/red]")
+            raise typer.Exit(2)
+        est = _sh.estimate(s)
+        options = _sh.propose(recon, est, cfg.phases)
+
+    c.print(f"\n  {recon.get('reason', '')}")
+    if recon.get("notes"):
+        c.print(f"  [dim]{recon['notes']}[/dim]")
+    if not recon.get("specified"):
+        c.print("  [yellow]this ticket is not specified enough to decompose[/yellow]")
+    c.print("")
+    for i, sh in enumerate(options, 1):
+        c.print(f"  [cyan]{i}[/cyan]  [bold]{sh.label:<26}[/bold] "
+                f"{'—' if not sh.lots else str(sh.lots) + ' lot' + ('s' if sh.lots > 1 else '')}"
+                f"   ~${sh.cost:>5.2f}   ~{sh.minutes:>3.0f} min")
+        c.print(f"     [dim]{sh.tradeoff}[/dim]")
+    c.print("  [cyan]n[/cyan]  none of these")
+    if est.grounded:
+        c.print(f"\n  [dim]estimates from {est.n} attempts in this database; lots here "
+                f"have averaged {est.retry:.1f} passes, and that is included.\n"
+                f"  API-equivalent cost — on a subscription this draws against your "
+                f"plan rather than billing per token.[/dim]")
+    else:
+        c.print("\n  [yellow]no history yet — these are guesses, not measurements[/yellow]")
+
+    rec = _sh.recommended(recon, options)
+    default = str(next(i for i, s_ in enumerate(options, 1) if s_.key == rec))
+    choice = pick or Prompt.ask("\n  shape", default=default,
+                                choices=[str(i) for i in range(1, len(options) + 1)] + ["n"])
+    if choice == "n":
+        c.print("[dim]nothing planned. Say what is wrong and re-run, or write the "
+                "plat.yaml by hand.[/dim]")
+        raise typer.Exit(0)
+    chosen = (next((s_ for s_ in options if s_.key == choice), None)
+              or options[int(choice) - 1])
+    c.print(f"\n[bold]{chosen.label}[/bold] — planning it in detail\n")
+    draft(anchor=anchor, ticket=ticket, text_=body, role="planner", out=None,
+          shape=chosen.constraint)
+
+
+@app.command()
 def draft(
     anchor: str = typer.Argument(..., help="DEV-1234, or fix_some-thing for unticketed work"),
     ticket: Path = typer.Option(None, "--ticket", "-t",
@@ -428,6 +501,7 @@ def draft(
     text_: str = typer.Option(None, "--text", help="the ticket text inline"),
     role: str = typer.Option("planner"),
     out: Path = typer.Option(None, "-o", help="where to write (default: .worktrees/<ANCHOR>.plat.yaml)"),
+    shape: str = typer.Option("", hidden=True, help="constraint from `plat shape`"),
 ):
     """Draft a plat.yaml from a ticket. Read-only: it plans, it never runs.
 
@@ -451,7 +525,7 @@ def draft(
     try:
         with DB.session() as s:
             path, spec, errs = _draft.run(s, cfg, anchor=anchor, ticket=body,
-                                          role_name=role, log=c.print)
+                                          role_name=role, shape=shape, log=c.print)
     except (_draft.DraftError, ingest.ContractError) as e:
         c.print(f"[red]{e}[/red]")
         raise typer.Exit(2)

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["repos", "specified", "reason"],
+  "additionalProperties": true,
+  "properties": {
+    "repos": {"type": "array", "items": {"type": "string"}},
+    "specified": {"type": "boolean"},
+    "reason": {"type": "string", "minLength": 1},
+    "code_exists": {"type": "boolean"},
+    "notes": {"type": "string"},
+    "measurable": {
+      "type": ["object", "null"],
+      "required": ["objective", "probe"],
+      "properties": {"objective": {"type": "string"}, "probe": {"type": "string"}}
+    }
+  }
+}

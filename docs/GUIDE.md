@@ -184,7 +184,43 @@ dropped. Gemini has no equivalent and ignores it rather than inventing one.
 
 **Why the reviewer is not read-only.** It must write its own verdict, and a read-only sandbox cannot write at all — it fails *silently*, producing no verdict file and no error. Writes are confined to the attempt's output directory, and the supervisor separately verifies the worktree fingerprint is unchanged across a review. Observed, not trusted.
 
-**Cost.** Claude reports `total_cost_usd` exactly. Codex and Gemini report only tokens, so their cost is estimated and marked `cost_estimated`, shown as `~`. Budget ceilings are therefore approximate on those providers — set them conservatively.
+**Cost, and what the number means.** Claude reports `total_cost_usd`; Codex and
+Gemini report only tokens, so theirs is estimated and shown with a `~`.
+
+But all of it is **API-equivalent cost**, not a bill. Plat drives CLIs you are
+already signed into, so on a subscription the work draws against your plan's
+limits and nothing is charged per token. The figure is still the number to reason
+with — it compares two shapes honestly, it proxies how much of your plan a run
+eats, and it is the real cost if you run Plat on API keys — but a budget ceiling
+gates notional spend rather than money.
+
+### Choosing the shape before planning it
+
+`plat draft` is one expensive take that commits to a single decomposition. `plat
+shape` puts a cheap reconnaissance pass in front of it:
+
+```
+1  split by repo (2 lots)   2 lots   ~$7.22   ~19 min
+   isolated blast radius and one review each; not faster until lots run in parallel
+2  single lot               1 lot    ~$3.61   ~10 min
+   cheapest; one agent holds the whole change and one failure loses all of it
+3  spike first              1 lot    ~$0.61    ~1 min
+   read-only investigation that comes back with a decomposition
+n  none of these
+
+estimates from 15 attempts in this database; lots here have averaged 2.0 passes,
+and that is included
+```
+
+Estimates come from `attempts` rather than a guess, **and they include the retry
+rate** — one code pass plus one review is the number people expect and roughly half
+the truth, because most lots here needed more than one pass. With no history the
+menu says the numbers are guesses instead of pretending otherwise.
+
+The shapes offered are the genuinely distinct answers to *how should this be
+divided* — split by repo, one lot, converge, review-only, spike first. Models,
+effort and phases stay in `roles.yaml`, because they are standing preferences
+rather than per-ticket decisions.
 
 ### Reviewing without a plat
 

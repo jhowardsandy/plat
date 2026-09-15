@@ -167,3 +167,12 @@ def test_yes_takes_the_default_it_does_not_say_yes_to_everything():
     src = inspect.getsource(cli.setup)
     assert "if not yes and Confirm.ask" in src
     assert "if yes or Confirm.ask" not in src
+
+
+def test_the_dollar_figures_are_labelled_as_api_equivalent():
+    """Plat drives CLIs you are signed into, so on a subscription nothing is
+    billed per token. Showing a bare $ implies an invoice that does not exist."""
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+    for f in ("README.md", "docs/GUIDE.md", "QUICKSTART.md"):
+        assert "API-equivalent" in (root / f).read_text(), f
