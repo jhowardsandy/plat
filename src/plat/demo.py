@@ -190,9 +190,14 @@ def seed(db) -> str:
         db.add(Event(plat_id=p.id, kind="demo", message=msg, ts=now - timedelta(minutes=m)))
 
     # ------------------------------------------------------------ delivered plat
+    # delivered THEN closed: a plat cannot be closed without having been
+    # delivered, and seeding data that cannot exist broke the invariant test that
+    # guards exactly that distinction -- a fresh clone running `plat demo` then
+    # `pytest` saw a failure it had done nothing to cause.
     q = Plat(anchor="DEMO-3987", title="Retry storms after a broker failover",
              tickets=["DEMO-3988"], related=[], status="closed", budget_usd=40.0,
              origin_id=ORIGIN, started_at=now - timedelta(days=3),
+             delivered_at=now - timedelta(days=2, hours=4),
              closed_at=now - timedelta(days=2))
     db.add(q); db.flush()
     ql = Lot(plat_id=q.id, key="event-relay", repo="services/event-relay", state="DONE",

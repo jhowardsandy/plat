@@ -48,7 +48,9 @@ A **plat** divides one tract into numbered lots: independently developable, reco
 
 ## Install
 
-Requires Python 3.12+, Postgres, Docker (for the dashboard), and at least one agent CLI.
+Requires Python 3.12+, Postgres, Docker (for the dashboard), and at least one agent
+CLI — `claude`, `codex` or `gemini` — already logged in. Plat shells out to whatever
+account you are signed into; there are no API keys to configure.
 
 ```bash
 uv tool install --editable .     # puts `plat` on PATH

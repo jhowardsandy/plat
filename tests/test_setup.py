@@ -156,3 +156,14 @@ def test_the_password_is_redacted():
     assert redact("postgresql+psycopg://u:hunter2@h:5432/d") == \
         "postgresql+psycopg://u:***@h:5432/d"
     assert "hunter2" not in redact("postgresql://u:hunter2@h/d")
+
+
+def test_yes_takes_the_default_it_does_not_say_yes_to_everything():
+    """`yes or Confirm.ask(...)` short-circuits true and enables a phase nobody
+    chose. --yes means "accept the defaults", not "opt into everything"."""
+    import inspect
+
+    from plat import cli
+    src = inspect.getsource(cli.setup)
+    assert "if not yes and Confirm.ask" in src
+    assert "if yes or Confirm.ask" not in src
