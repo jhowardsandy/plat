@@ -335,6 +335,33 @@ envelopes and tool-call JSON. Claude runs with `--output-format stream-json` rat
 than `json`, because `json` buffers the whole run and emits one object at exit:
 there is nothing to tail for the hour that matters.
 
+### An agent outlives the session that started it
+
+Agents run in their own process group, so closing the terminal does not kill one.
+That is deliberate — a stray Ctrl-C should not leave a worktree half-written — but
+it has a consequence: you can come back to a lot whose heartbeat went cold while
+an agent is still working in it. The lot reads `⚠ stale` and is anything but.
+
+Plat records each agent's pid at spawn, so the next run checks before it acts:
+
+```
+  [CODING a1] -> wait: an agent from a previous session is still running on this lot
+    code: claude/sonnet pid 48122, 14m in
+    let it finish, or: plat abort DEV-3910 search-portal-web
+```
+
+It refuses rather than proceeding, because the alternative is gating a tree that
+is still moving — a verdict about a worktree that no longer exists by the time you
+read it. Come back when it has finished and the run picks up normally.
+
+`plat abort <anchor> [lot]` is the other door. Unlike `plat pause`, which lets
+in-flight agents finish, it signals the agent's whole process group — the agent
+and the test runners it started — and marks the lot `ABORTED`. Whatever had
+already been written to the worktree stays there; `plat reopen` puts the lot back
+in play. Identity is checked twice before anything is signalled (the recorded
+command, and the process being at least as old as the attempt), because a
+recycled pid would otherwise aim it at someone else's work.
+
 **`stale` is relative, not a timeout.** A 95-minute indexing run is healthy; a 12-minute review is probably wedged. The threshold is three times the median duration of that phase in that repo, floored at ten minutes.
 
 ### Delivered is not closed

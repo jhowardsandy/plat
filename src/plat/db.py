@@ -46,6 +46,7 @@ ADDITIVE = [
     "ALTER TABLE plats ADD COLUMN IF NOT EXISTS kind varchar(8) DEFAULT \'plat\'",
     # Widenings are safe and idempotent. Narrowing never belongs here.
     "ALTER TABLE plats ADD COLUMN IF NOT EXISTS delivered_at timestamptz",
+    "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS pid integer",
     "ALTER TABLE plats ADD COLUMN IF NOT EXISTS ticket_status varchar(64)",
     "ALTER TABLE plats ADD COLUMN IF NOT EXISTS ticket_summary text",
     "ALTER TABLE plats ADD COLUMN IF NOT EXISTS ticket_url text",

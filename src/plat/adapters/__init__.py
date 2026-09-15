@@ -20,10 +20,11 @@ def narrate(provider: str, chunk: str) -> list[str]:
         return []
 
 
-def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None) -> AgentResult:
+def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None,
+        on_pid=None) -> AgentResult:
     mod = PROVIDERS.get(role.provider)
     if mod is None:
         raise ValueError(f"unknown provider {role.provider!r}; have {sorted(PROVIDERS)}")
-    res = mod.run(role, prompt_file, cwd, on_chunk=on_chunk)
+    res = mod.run(role, prompt_file, cwd, on_chunk=on_chunk, on_pid=on_pid)
     res.provider = role.provider
     return res

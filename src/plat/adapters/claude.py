@@ -32,9 +32,10 @@ def build(role: Role, prompt_file: Path, cwd: Path) -> list[str]:
     return cmd
 
 
-def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None) -> AgentResult:
+def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None,
+        on_pid=None) -> AgentResult:
     rc, out, err, dt = spawn(build(role, prompt_file, cwd), cwd,
-                             role.timeout_s, on_chunk=on_chunk)
+                             role.timeout_s, on_chunk=on_chunk, on_pid=on_pid)
     res = AgentResult(ok=(rc == 0), exit_code=rc, duration_s=dt, stdout=out, stderr=err)
     d = None
     for line in out.splitlines():           # NDJSON; the result is the last event
