@@ -239,6 +239,32 @@ Three renderers, one source. `v_live_lots` computes the derived signals — `sta
 
 **`stale` is relative, not a timeout.** A 95-minute indexing run is healthy; a 12-minute review is probably wedged. The threshold is three times the median duration of that phase in that repo, floored at ten minutes.
 
+### Delivered is not closed
+
+A plat has two endings and they mean different things:
+
+| | set by | means |
+|---|---|---|
+| `delivered` | the supervisor | every lot is terminal. **Nothing is pushed, reviewed or merged.** |
+| `closed` | you, via `plat close` | it actually shipped |
+
+Conflating them is not a cosmetic problem. Three finished plats read as `closed`
+while one had an open MR and two had unpushed branches — the ledger said the work
+was done and none of it had landed. A ledger that is wrong is worse than one that
+is empty, because you stop checking it.
+
+```
+$ plat history --awaiting
+ DEV-3910  One malformed word box...      2026-09-14  awaiting you   $3.98
+ DEV-3911  Rate limiter keys on the...    2026-09-14  awaiting you   $5.03
+ DEV-3913  Surface build version on...    2026-09-14  awaiting you   $4.84
+ 3 plat(s) delivered and not closed — `plat close <anchor>` when it ships.
+```
+
+A delivered plat leaves the live board, because it is not in flight, and keeps a
+row in history, because it is waiting on a person. `plat close` records the
+closing as **your** decision, marked irreversible, with whatever reason you give.
+
 ## 8b. Being told
 
 Plat's most expensive moment is a lot that stopped for a human while nobody was

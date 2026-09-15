@@ -131,35 +131,41 @@ def _ask(db, lot) -> str | None:
     return v.get("blocking_question")
 
 
-def maybe_close_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
-    """Close a plat once every lot is terminal.
+def maybe_deliver_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
+    """Mark a plat DELIVERED once every lot is terminal.
 
-    In v0 "closed" means exactly that: all lots DONE. v1 inserts closing the
-    traverse, recording and sign-off ahead of this, and a human makes the call.
-    Until then a finished plat must still leave the live view, or the monitor
-    fills up with work that ended days ago.
+    Delivered is not closed. Plat has finished its work; the branch is unpushed,
+    unreviewed and unmerged, and a human owns it from here. Calling that "closed"
+    made three finished plats read as shipped when not one of them had merged --
+    the ledger was lying, which is worse than the ledger being empty.
+
+    `plat close` is how a human says it actually shipped. v1 inserts closing the
+    traverse, recording and sign-off ahead of delivery.
     """
     lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id)).all()
     if not lots or any(l.state not in (LotState.DONE.value, LotState.ABORTED.value)
                        for l in lots):
         return False
-    if plat.closed_at is not None:
+    if plat.delivered_at is not None:
         return False
     done = sum(1 for l in lots if l.state == LotState.DONE.value)
-    record(db, plat_id=plat.id, actor="system", actor_detail="fsm.close_plat",
+    record(db, plat_id=plat.id, actor="system", actor_detail="fsm.deliver_plat",
            kind="transition",
-           decision=f"plat closed - {done}/{len(lots)} lots DONE",
-           rationale="every lot is terminal; v0 has no traverse or recording phase "
-                     "ahead of this, so closing is mechanical rather than a judgement",
+           decision=f"plat DELIVERED - {done}/{len(lots)} lots DONE",
+           rationale="every lot is terminal, so Plat's work is finished. Nothing is "
+                     "pushed, reviewed or merged -- that is a human's, and `plat "
+                     "close` is how they say it shipped.",
            inputs={"lots": len(lots), "done": done,
                    "spent_usd": round(spent(db, plat), 2)})
-    plat.status = "closed"
-    plat.closed_at = datetime.now(timezone.utc)
+    plat.status = "delivered"
+    plat.delivered_at = datetime.now(timezone.utc)
     db.commit()
-    log(f"  [bold green]plat closed[/bold green] ({done}/{len(lots)} lots)")
+    log(f"  [bold green]plat delivered[/bold green] ({done}/{len(lots)} lots) "
+        f"[dim]— review it, then `plat close {plat.anchor}`[/dim]")
     if cfg is not None:
-        notify.send(notify.Event(kind="closed", anchor=plat.anchor,
-                                 title=f"closed — {done}/{len(lots)} lots done",
+        notify.send(notify.Event(kind="delivered", anchor=plat.anchor,
+                                 title=f"delivered — {done}/{len(lots)} lots, "
+                                       f"waiting on you",
                                  detail=f"${spent(db, plat):.2f}"), cfg.notify)
     return True
 

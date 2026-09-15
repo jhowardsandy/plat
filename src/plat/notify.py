@@ -21,7 +21,7 @@ from typing import Any
 
 # Events worth interrupting someone for. Deliberately few: a notifier that fires
 # on everything is one people mute, and a muted notifier is worse than none.
-KINDS = ("blocked", "closed", "budget", "review_findings")
+KINDS = ("blocked", "delivered", "closed", "budget", "review_findings")
 
 
 @dataclass
@@ -66,7 +66,8 @@ def _webhook(ev: Event, cfg: dict) -> None:
     url = cfg.get("url")
     if not url:
         return
-    emoji = {"blocked": ":raised_hand:", "closed": ":white_check_mark:",
+    emoji = {"blocked": ":raised_hand:", "delivered": ":package:",
+             "closed": ":white_check_mark:",
              "budget": ":moneybag:", "review_findings": ":mag:"}.get(ev.kind, ":robot_face:")
     text = f"{emoji} *{ev.line()}*"
     if ev.detail:

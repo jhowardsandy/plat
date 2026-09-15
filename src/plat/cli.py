@@ -396,7 +396,7 @@ def start(anchor: str):
                 c.print(f"  [red]halted:[/red] {e}")
                 continue
             c.print(f"  [bold]{final}[/bold]")
-        runner.maybe_close_plat(s, p, log=c.print, cfg=cfg)
+        runner.maybe_deliver_plat(s, p, log=c.print, cfg=cfg)
         c.print(f"\nspent ${runner.spent(s, p):.2f} of ${p.budget_usd:.2f}")
 
 
@@ -418,6 +418,34 @@ def pause(anchor: str = typer.Argument(None), resume: bool = typer.Option(False,
                inputs={"was": was},
                apply=lambda: setattr(p, "status", new))
         c.print(f"[green]{p.anchor}[/green] {was} -> {new}")
+
+
+@app.command()
+def close(anchor: str = typer.Argument(None),
+          note: str = typer.Option("", "--note", "-n",
+                help="where it shipped, or why you are calling it done")):
+    """Say a delivered plat actually shipped. Only a human can.
+
+    Plat marks work `delivered` when its lots finish — nothing is pushed, reviewed
+    or merged at that point. This is the other half, and it is yours.
+    """
+    from datetime import datetime, timezone
+    from .decisions import record
+    with DB.session() as s:
+        p = _resolve(s, anchor)
+        if p.closed_at is not None:
+            c.print(f"[dim]{p.anchor} already closed {p.closed_at:%Y-%m-%d}[/dim]")
+            return
+        if p.delivered_at is None:
+            c.print(f"[yellow]{p.anchor} is {p.status}, not delivered[/yellow] — "
+                    f"closing work that has not finished")
+        record(s, plat_id=p.id, actor="human", actor_detail="cli", kind="signoff",
+               decision="closed — shipped", rationale=note or "(no reason given)",
+               alternatives=["leave it delivered"], reversible=False,
+               inputs={"was": p.status},
+               apply=lambda: (setattr(p, "status", "closed"),
+                              setattr(p, "closed_at", datetime.now(timezone.utc))))
+        c.print(f"[green]{p.anchor}[/green] {p.status} — closed")
 
 
 @app.command()
@@ -644,6 +672,8 @@ def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
 
 @app.command()
 def history(limit: int = 25,
+            awaiting: bool = typer.Option(False, "--awaiting", "-a",
+                      help="only plats Plat has delivered and nobody has closed"),
             markdown: bool = typer.Option(False, "--markdown", "-m",
                   help="emit markdown rows for a work-tracking ledger")):
     """Delivered plats — the archive the live monitor deliberately hides.
@@ -657,7 +687,9 @@ def history(limit: int = 25,
     from sqlalchemy import text
     with DB.engine().begin() as conn:
         rows = conn.execute(text(
-            "SELECT * FROM v_delivered_plats ORDER BY closed DESC NULLS LAST LIMIT :n"),
+            "SELECT * FROM v_delivered_plats "
+            + ("WHERE awaiting_you " if awaiting else "")
+            + "ORDER BY delivered DESC NULLS LAST LIMIT :n"),
             {"n": limit}).mappings().all()
     if not rows:
         c.print("[dim]no delivered plats yet[/dim]")
@@ -684,8 +716,8 @@ def history(limit: int = 25,
     # Fold the roster count into the ticket cell the way the ledger writes it
     # (**ANCHOR** +N) and truncate the title here rather than fighting the layout.
     t = Table(box=None, header_style="dim")
-    for col, j in (("ticket", "left"), ("title", "left"), ("started", "left"),
-                   ("closed", "left"), ("lots", "right"), ("att", "right"),
+    for col, j in (("ticket", "left"), ("title", "left"), ("delivered", "left"),
+                   ("status", "left"), ("lots", "right"), ("att", "right"),
                    ("find", "right"), ("spend", "right"), ("flag", "left")):
         t.add_column(col, justify=j, no_wrap=True)
     for r in rows:
@@ -693,12 +725,19 @@ def history(limit: int = 25,
         title = r["title"] or ""
         if len(title) > 44:
             title = title[:43] + "…"
+        status = (f"[yellow]awaiting you[/yellow]" if r["awaiting_you"]
+                  else f"[green]{r['status']}[/green]")
         t.add_row(f"[green]{r['anchor']}[/green]" + (f" [dim]+{n}[/dim]" if n else ""),
-                  title, str(r["started"] or "—"), str(r["closed"] or "—"),
+                  title, str(r["delivered"] or "—"), status,
                   str(r["lots"]), str(r["attempts"]), str(r["findings"]),
                   f"${r['spend']:.2f}",
                   "[red]⚠ roster gap[/red]" if r["roster_gap"] else "[dim]·[/dim]")
     c.print(t)
+    n_await = sum(1 for r in rows if r["awaiting_you"])
+    if n_await:
+        c.print(f"[yellow]{n_await} plat(s) delivered and not closed[/yellow] — "
+                f"Plat finished; nothing is pushed, reviewed or merged. "
+                f"[dim]`plat close <anchor>` when it ships.[/dim]")
     if any(r["roster_gap"] for r in rows):
         c.print("[dim]⚠ a roster ticket was never delivered as a plat of its own. "
                 "Plat cannot see your issue tracker; cross-check there.[/dim]")

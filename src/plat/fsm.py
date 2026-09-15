@@ -31,7 +31,8 @@ class PlatState(StrEnum):
     CLOSING   = "closing"     # closing the traverse
     RECORDING = "recording"
     SIGNOFF   = "signoff"     # hard stop. a human, always.
-    CLOSED    = "closed"
+    DELIVERED = "delivered"   # Plat is finished; a human owns it now
+    CLOSED    = "closed"      # a human says it shipped
     ABORTED   = "aborted"
 
 

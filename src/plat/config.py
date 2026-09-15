@@ -31,7 +31,7 @@ DEFAULTS = {
     "max_attempts": 3,
     # Notify YOU when a run needs you. Plat never announces to other people.
     "notify": {"enabled": True, "handlers": ["desktop"],
-               "on": ["blocked", "budget"]},
+               "on": ["blocked", "delivered", "budget"]},
 }
 
 CONFIG_TEMPLATE = '''# plat configuration -- environment variables override every value here.
@@ -59,11 +59,11 @@ max_attempts = {max_attempts}
 # and stays a deliberate act.
 #
 #   handlers: desktop | webhook | exec
-#   on:       blocked | closed | budget | review_findings
+#   on:       blocked | delivered | closed | budget | review_findings
 [notify]
 enabled  = true
 handlers = ["desktop"]
-on       = ["blocked", "budget"]
+on       = ["blocked", "delivered", "budget"]
 
 # [notify.webhook]                     # posts outward only, nothing to run
 # url = "https://hooks.slack.com/services/..."   # point at a DM or your own channel

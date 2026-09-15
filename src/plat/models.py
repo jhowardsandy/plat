@@ -42,7 +42,13 @@ class Plat(Base):
     budget_usd: Mapped[float] = mapped_column(Float, default=0.0)
     origin_id: Mapped[str] = mapped_column(String(64))   # per-install; keeps corpora mergeable
     started_at: Mapped[datetime] = _now()
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When PLAT finished its work and handed over. Set by the supervisor.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                          nullable=True)
+    # When a HUMAN declared it actually shipped. Only ever set by `plat close`.
+    # Conflating these made every finished plat read as done when none had merged.
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                       nullable=True)
 
     lots: Mapped[list["Lot"]] = relationship(back_populates="plat")
 

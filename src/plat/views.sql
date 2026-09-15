@@ -51,7 +51,8 @@ LEFT JOIN LATERAL (
   WHERE lh.repo = l.repo AND a.phase = cur.phase
     AND a.finished_at IS NOT NULL AND a.provider <> 'supervisor'
 ) hist ON true
-WHERE p.status NOT IN ('closed', 'aborted') AND p.kind = 'plat';
+WHERE p.status NOT IN ('delivered', 'closed', 'aborted')
+  AND p.kind = 'plat';
 
 DROP VIEW IF EXISTS v_plat_summary CASCADE;
 CREATE VIEW v_plat_summary AS
@@ -100,8 +101,12 @@ DROP VIEW IF EXISTS v_delivered_plats CASCADE;
 CREATE VIEW v_delivered_plats AS
 SELECT
   p.anchor, p.title, p.tickets AS roster, p.status,
-  p.started_at::date AS started,
-  p.closed_at::date  AS closed,
+  p.started_at::date   AS started,
+  p.delivered_at::date AS delivered,
+  p.closed_at::date    AS closed,
+  -- Plat finished but nobody has said it shipped. This is the queue that is
+  -- actually waiting on a person, and the thing "closed" used to hide.
+  (p.delivered_at IS NOT NULL AND p.closed_at IS NULL) AS awaiting_you,
   count(l.id)        AS lots,
   (SELECT count(*) FROM attempts a JOIN lots l2 ON l2.id = a.lot_id
      WHERE l2.plat_id = p.id)                                        AS attempts,
@@ -118,7 +123,7 @@ SELECT
       SELECT 1 FROM plats q WHERE q.anchor = tk AND q.closed_at IS NOT NULL)
   ) AS roster_gap
 FROM plats p LEFT JOIN lots l ON l.plat_id = p.id
-WHERE p.closed_at IS NOT NULL AND p.kind = 'plat'
+WHERE p.delivered_at IS NOT NULL AND p.kind = 'plat'
 GROUP BY p.id;
 
 -- Standalone reviews of branches someone already wrote. The cheapest way to get
