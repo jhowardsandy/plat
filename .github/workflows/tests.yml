@@ -46,10 +46,12 @@ jobs:
           enable-cache: true
 
       - name: install
-        run: uv sync --all-extras --dev || uv pip install -e ".[dev]" || uv pip install -e .
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: lint
-        run: uvx ruff check src tests
+        run: uv run ruff check src tests
 
       - name: schema and views
         run: uv run plat init

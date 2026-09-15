@@ -28,6 +28,15 @@ dependencies = [
   "textual>=0.80",
 ]
 
+[project.optional-dependencies]
+# Declared, not assumed. These were installed by hand for the whole of
+# development and existed nowhere, so CI could not run a single test.
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",   # the TUI is driven through textual's async harness
+  "ruff>=0.7",
+]
+
 [project.scripts]
 plat = "plat.cli:app"
 

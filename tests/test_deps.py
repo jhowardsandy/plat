@@ -89,3 +89,13 @@ def test_every_adapter_accepts_the_streaming_callback():
     from plat import adapters
     for name, mod in adapters.PROVIDERS.items():
         assert "on_chunk" in inspect.signature(mod.run).parameters, name
+
+
+def test_the_test_dependencies_are_declared():
+    """pytest, pytest-asyncio and ruff were installed by hand for the whole of
+    development and declared nowhere, so CI could not run a single test."""
+    import tomllib
+    meta = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    dev = " ".join(meta["project"].get("optional-dependencies", {}).get("dev", []))
+    for pkg in ("pytest", "pytest-asyncio", "ruff"):
+        assert pkg in dev, f"{pkg} is used but not declared in the dev extra"
