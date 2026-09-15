@@ -127,9 +127,11 @@ enough to decompose, does the code already exist — then a menu of ways to divi
 the work with cost and time estimates drawn from what runs here have actually
 cost. Pick one and it plans that shape in detail.
 
-Those dollar figures are **API-equivalent cost**. On a Claude or ChatGPT
-subscription the work draws against your plan rather than billing per token; the
-number is there to compare options honestly, not to predict an invoice.
+Those dollar figures are **API-equivalent cost** — what the work would cost if you
+were paying per token rather than through a subscription. On a plan nothing is
+billed per token, but it is still the number worth having: it says which shape is
+genuinely cheaper, whether the economics hold at volume, and what a run is worth
+against the time it saves.
 
 ## 6. Plan it
 

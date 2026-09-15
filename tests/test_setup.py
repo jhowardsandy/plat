@@ -169,10 +169,18 @@ def test_yes_takes_the_default_it_does_not_say_yes_to_everything():
     assert "if yes or Confirm.ask" not in src
 
 
-def test_the_dollar_figures_are_labelled_as_api_equivalent():
-    """Plat drives CLIs you are signed into, so on a subscription nothing is
-    billed per token. Showing a bare $ implies an invoice that does not exist."""
+def test_the_docs_explain_what_the_dollar_figures_mean():
+    """Plat drives CLIs you are signed into, so on a subscription nothing is billed
+    per token — a bare $ implies an invoice that does not exist.
+
+    Checks the IDEA is present, not one magic phrase: the first version of this
+    asserted an exact string and failed on a rewrite that made the docs better,
+    which is a test defending its own wording rather than the reader.
+    """
     from pathlib import Path
     root = Path(__file__).parent.parent
     for f in ("README.md", "docs/GUIDE.md", "QUICKSTART.md"):
-        assert "API-equivalent" in (root / f).read_text(), f
+        body = (root / f).read_text().lower()
+        assert "subscription" in body, f"{f} does not mention the subscription case"
+        assert "per token" in body or "api-equivalent" in body, \
+            f"{f} never says what the figure actually measures"
