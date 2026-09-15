@@ -4,12 +4,22 @@ Every table here outlives the worktree it describes: deleting a checkout must
 never destroy the record of how the work in it was done.
 """
 from __future__ import annotations
-from datetime import datetime, timedelta
+
+from datetime import datetime
 from typing import Any
+
 from sqlalchemy import (
-    String, Text, Integer, Float, Boolean, DateTime, ForeignKey, Index, func,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 

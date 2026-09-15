@@ -5,9 +5,10 @@ If a routing decision needs judgement, it does NOT belong here -- it goes to a
 Never "read this and decide what to do."
 """
 from __future__ import annotations
+
+import operator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-import operator
 from enum import StrEnum
 from typing import Any, Literal
 

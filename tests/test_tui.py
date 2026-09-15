@@ -1,6 +1,6 @@
 """plat top, driven headlessly. A TUI you cannot test is a TUI you cannot trust."""
 import pytest
-from textual.widgets import DataTable, RichLog, Static
+from textual.widgets import DataTable, Static
 
 from plat.tui import PlatTop
 
@@ -52,9 +52,10 @@ async def test_reopen_refuses_anything_not_blocked():
     app = await _boot()
     async with app.run_test() as pilot:
         await pilot.pause()
+        from sqlalchemy import select
+
         from plat.db import session
         from plat.models import Lot
-        from sqlalchemy import select
         with session() as s:
             lot = s.scalars(select(Lot).where(Lot.state == "DONE")).first()
         if lot is None:
@@ -78,6 +79,7 @@ async def test_top_and_status_read_the_same_query():
     """Three renderers over one view is the whole design. A TUI with its own SQL
     would drift from `plat status` and from Grafana."""
     import inspect
+
     from plat import tui
     assert "_live_rows(" in inspect.getsource(tui.PlatTop.refresh_all)
 

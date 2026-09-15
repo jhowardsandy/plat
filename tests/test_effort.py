@@ -1,6 +1,7 @@
 """The thinking ladder. Escalation used to have exactly one rung: sonnet -> opus,
 three times the price in a single step."""
 from pathlib import Path
+
 import pytest
 import yaml
 

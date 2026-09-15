@@ -5,8 +5,10 @@ lot for reasons that have nothing to do with the code. So smoke() runs first, on
 the clean worktree, before a single token is spent.
 """
 from __future__ import annotations
-import re, subprocess
-from dataclasses import dataclass, asdict
+
+import re
+import subprocess
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 # Anchor on a runner's SUMMARY line. Matching "(\d+) passed" anywhere in the blob

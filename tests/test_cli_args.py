@@ -1,6 +1,8 @@
 """Bare invocations should do the obvious thing, and a miss should explain itself."""
 import inspect
+
 import pytest
+
 from plat import cli
 
 
@@ -44,6 +46,7 @@ def test_status_watch_is_opt_in_and_reuses_the_same_query():
     assert _default(params["watch"]) is False, "watching must be opt-in"
     assert _default(params["interval"]) > 0
     import inspect
+
     from plat import cli
     watch_src = inspect.getsource(cli._watch)
     assert "_live_rows(" in watch_src and "_lots_table(" in watch_src
@@ -57,6 +60,7 @@ def test_in_flight_attempts_are_committed_before_the_agent_spawns():
     no phase, no provider and no elapsed for the whole run, which is exactly the
     window it exists to cover."""
     import inspect
+
     from plat import runner
     for fn in (runner._run_agent, runner._run_gate):
         src = inspect.getsource(fn)

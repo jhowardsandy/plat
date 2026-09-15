@@ -48,6 +48,7 @@ def test_claude_streams_rather_than_buffering():
     """--output-format json emits ONE object at exit, so there is nothing to tail
     for the whole hour that matters."""
     import inspect
+
     from plat.adapters import claude
     src = inspect.getsource(claude.build)
     assert "stream-json" in src and '"json",' not in src
@@ -57,6 +58,7 @@ def test_a_line_split_across_chunks_is_not_lost():
     """spawn flushes every ~2s or ~4KB, so a chunk routinely ends mid-line. The
     runner carries the incomplete tail forward instead of dropping it."""
     import inspect
+
     from plat import runner
     src = inspect.getsource(runner._run_agent)
     assert "residue" in src

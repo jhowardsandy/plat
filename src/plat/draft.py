@@ -18,7 +18,9 @@ from pathlib import Path
 import yaml
 from sqlalchemy import text
 
-from . import adapters, prompts as P, roles as R
+from . import adapters
+from . import prompts as P
+from . import roles as R
 from .config import Config, home
 
 

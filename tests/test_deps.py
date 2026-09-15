@@ -62,6 +62,7 @@ def test_spawn_streams_chunks_while_the_process_runs(monkeypatch):
     """
     import sys
     from pathlib import Path
+
     from plat.adapters import base
     from plat.adapters.base import spawn
 
@@ -84,6 +85,7 @@ def test_spawn_streams_chunks_while_the_process_runs(monkeypatch):
 
 def test_every_adapter_accepts_the_streaming_callback():
     import inspect
+
     from plat import adapters
     for name, mod in adapters.PROVIDERS.items():
         assert "on_chunk" in inspect.signature(mod.run).parameters, name

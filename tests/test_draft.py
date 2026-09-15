@@ -1,7 +1,8 @@
 """The draft validator. Catching a bad draft here means an editable line, not a
 traceback twenty minutes later with a worktree half-created."""
 import pytest
-from plat.draft import validate, unverifiable
+
+from plat.draft import unverifiable, validate
 
 
 def spec(**over):
@@ -76,7 +77,10 @@ def test_unverifiable_criteria_are_surfaced_not_rejected():
 def test_the_planner_is_not_run_in_plan_mode():
     """permission_mode: plan blocks every write INCLUDING the draft, and fails
     silently — exit 0, no denials, no file. $6.91 established this."""
-    import yaml, pathlib
+    import pathlib
+
+    import yaml
+
     from plat import roles
     spec = yaml.safe_load(
         (pathlib.Path(roles.__file__).parent / "roles.default.yaml").read_text())
@@ -87,6 +91,7 @@ def test_the_planner_is_not_run_in_plan_mode():
 
 def test_a_planner_that_edited_a_repo_is_rejected():
     import inspect
+
     from plat import draft
     src = inspect.getsource(draft.run)
     assert "_dirty(" in src and "MODIFIED" in src
@@ -96,6 +101,7 @@ def test_the_planner_is_told_commands_run_in_the_worktree():
     """A draft once emitted `cd core/foo && pnpm test` as a verify command, which
     would test the untouched original checkout rather than the agent's work."""
     from pathlib import Path
+
     from plat import prompts
     t = (Path(prompts.PACKS) / "plan.md").read_text()
     assert "INSIDE that lot's worktree" in t

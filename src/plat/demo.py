@@ -15,8 +15,20 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
-from .models import (Plat, Lot, Attempt, Session as SessionRow, Verdict, Finding,
-                     Criterion, Artifact, Transcript, LogChunk, Decision, Event)
+from .models import (
+    Artifact,
+    Attempt,
+    Criterion,
+    Decision,
+    Event,
+    Finding,
+    LogChunk,
+    Lot,
+    Plat,
+    Transcript,
+    Verdict,
+)
+from .models import Session as SessionRow
 
 ORIGIN = "demo"
 ANCHORS = ("DEMO-4021", "DEMO-3987")

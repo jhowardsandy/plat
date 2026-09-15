@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import json
 from pathlib import Path
-from .base import Role, AgentResult, spawn
+
+from .base import AgentResult, Role, spawn
 
 NAME = "claude"
 

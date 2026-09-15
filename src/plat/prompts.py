@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pathlib import Path
 
 PACKS = Path(__file__).parent / "prompts"

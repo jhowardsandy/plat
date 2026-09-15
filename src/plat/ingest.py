@@ -4,14 +4,18 @@ The moment a phase completes its artifacts are ingested, and disk becomes a cach
 you are free to delete -- which matters, because tearing down a worktree does.
 """
 from __future__ import annotations
-import hashlib, json
+
+import hashlib
+import json
 from pathlib import Path
+
 from jsonschema import Draft202012Validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
-from .models import (Verdict, Finding, Attempt,
-                     Session as SessionRow, Artifact, Transcript)
+
 from .decisions import record
+from .models import Artifact, Attempt, Finding, Transcript, Verdict
+from .models import Session as SessionRow
 
 SCHEMAS = Path(__file__).parent / "schemas"
 

@@ -1,7 +1,9 @@
 """L2a - the termination contract. Invalid JSON is never inferred around."""
 import json
+
 import pytest
-from plat.ingest import load_verdict, ContractError
+
+from plat.ingest import ContractError, load_verdict
 
 GOOD_CODE = {
     "lot": "x", "phase": "code", "attempt": 1, "status": "complete",
@@ -74,6 +76,7 @@ def test_findings_that_stop_being_raised_are_marked_resolved():
     Without it prior art can only say someone once complained, never whether it
     stuck — which is most of its value."""
     import inspect
+
     from plat import ingest
     src = inspect.getsource(ingest.persist)
     assert "resolved_in_attempt_id" in src

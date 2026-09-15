@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from contextlib import contextmanager
 from pathlib import Path
+
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
+
 from .config import load
 from .models import Base
 

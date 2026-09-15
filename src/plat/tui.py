@@ -90,7 +90,7 @@ class PlatTop(App):
         # touches the database, and a monitor that dies when the database blips
         # is worse than one that says so and keeps running.
         try:
-            from .cli import _live_rows      # one query, shared with status
+            from .cli import _live_rows  # one query, shared with status
             rows = _live_rows(self.anchor, self.all_)
             self._stats(rows)
             self._lots(rows)
@@ -234,9 +234,9 @@ class PlatTop(App):
 
     def action_pause(self) -> None:
         """Pause or resume the selected lot's plat. Recorded as a human decision."""
+
         from .decisions import record
-        from .models import Plat, Lot
-        from sqlalchemy import select
+        from .models import Lot, Plat
         if self.sel is None:
             return
         with DB.session() as s:

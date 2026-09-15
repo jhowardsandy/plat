@@ -1,16 +1,25 @@
 from __future__ import annotations
-import json, shutil, subprocess, tempfile
+
+import json
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
-import typer, yaml
+
+import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy import select
 
-from . import db as DB, gates, ingest, prompts as P, roles as R, runner, worktree
+from . import db as DB
+from . import gates, ingest, runner, worktree
+from . import prompts as P
+from . import roles as R
 from .adapters import run as run_agent
 from .config import load
 from .fsm import LotState
-from .models import Plat, Lot, Attempt, Criterion, Decision, Finding
+from .models import Criterion, Decision, Lot, Plat
 
 app = typer.Typer(add_completion=False, help="Plat - one ticket, many lots, one instrument.")
 c = Console()
@@ -62,8 +71,9 @@ def setup(
     asks questions will happily record an answer that cannot work.
     """
     from rich.prompt import Confirm, Prompt
+
     from . import setup as S
-    from .config import config_path, write_default_config, home
+    from .config import config_path, home, write_default_config
     from .draft import discover_repos
 
     def ask(q, default, choices=None):
@@ -183,7 +193,7 @@ def init():
     """Create the schema and install the views. Idempotent."""
     for s in DB.init():
         c.print(f"  [dim]{s}[/dim]")
-    from .config import write_default_config, config_path
+    from .config import config_path, write_default_config
     cfg = load()
     if not cfg.roles_path.exists():
         shutil.copy(Path(__file__).parent / "roles.default.yaml", cfg.roles_path)
@@ -191,7 +201,7 @@ def init():
     if not config_path().exists():
         write_default_config()
         c.print(f"[green]wrote[/green] {config_path()}  [dim]edit it to taste[/dim]")
-    c.print(f"[green]ready[/green]")
+    c.print("[green]ready[/green]")
     c.print(f"  db        {cfg.database_url.split('@')[-1]}")
     c.print(f"  workspace {cfg.workspace_root}")
     c.print(f"  worktrees {cfg.worktrees_root}")
@@ -373,6 +383,7 @@ def draft(
     and `plat plan` still smoke-tests every gate before a token is spent.
     """
     import sys
+
     from . import draft as _draft
     cfg = load()
     if text_:
@@ -604,6 +615,7 @@ def close(anchor: str = typer.Argument(None),
     or merged at that point. This is the other half, and it is yours.
     """
     from datetime import datetime, timezone
+
     from .decisions import record
     with DB.session() as s:
         p = _resolve(s, anchor)
@@ -741,8 +753,9 @@ def _watch(anchor, all_, interval):
     """
     import time
     from datetime import datetime
-    from rich.live import Live
+
     from rich.console import Group
+    from rich.live import Live
     from rich.panel import Panel
 
     def frame():
@@ -806,7 +819,10 @@ def top(anchor: str = typer.Argument(None),
 @app.command()
 def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
     """Bring up the Plat Room dashboard on http://localhost:3033 (read-only)."""
-    import os, subprocess, webbrowser, time
+    import os
+    import subprocess
+    import time
+    import webbrowser
     root = Path(__file__).resolve().parent.parent.parent
     compose = root / "docker-compose.plat.yml"
     if stop:
@@ -816,7 +832,7 @@ def ui(stop: bool = typer.Option(False, "--stop"), open_browser: bool = True):
     # Hand the container the SAME database this install is configured against,
     # derived from database_url. Otherwise the dashboard quietly points at
     # whatever the compose defaults are and shows an empty board.
-    from urllib.parse import urlparse, unquote
+    from urllib.parse import unquote, urlparse
     u = urlparse(load().database_url.replace("+psycopg", ""))
     host = u.hostname or "localhost"
     env = {**os.environ,
@@ -902,7 +918,7 @@ def history(limit: int = 25,
         title = r["title"] or ""
         if len(title) > 44:
             title = title[:43] + "…"
-        status = (f"[yellow]awaiting you[/yellow]" if r["awaiting_you"]
+        status = ("[yellow]awaiting you[/yellow]" if r["awaiting_you"]
                   else f"[green]{r['status']}[/green]")
         tk = r["ticket_status"] or "—"
         # a delivered plat whose ticket still reads open is the drift worth seeing

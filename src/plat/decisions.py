@@ -6,8 +6,11 @@ transaction -- so it is structurally impossible to change a plat without leaving
 a record of who decided, what else was on the table, and what they were looking at.
 """
 from __future__ import annotations
+
 from typing import Any, Callable
+
 from sqlalchemy.orm import Session as DbSession
+
 from .models import Decision, Event
 
 

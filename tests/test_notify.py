@@ -1,5 +1,6 @@
 """Notifications must be impossible to blame for a failed run."""
 import pytest
+
 from plat import notify
 from plat.notify import Event, send
 
@@ -53,6 +54,7 @@ def test_webhook_without_a_url_does_nothing():
 
 def test_the_runner_notifies_when_a_lot_blocks():
     import inspect
+
     from plat import runner
     src = inspect.getsource(runner.run_lot)
     assert "notify.send" in src and 'kind="budget" if "budget"' in src

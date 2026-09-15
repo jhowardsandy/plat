@@ -3,19 +3,24 @@
 decide() -> act -> ingest -> decide(). No LLM is ever asked what to do next.
 """
 from __future__ import annotations
+
+import itertools
+import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
-import itertools, subprocess, threading
-
-from . import fsm, gates, ingest, notify, prompts as P, roles as R, adapters
+from . import adapters, fsm, gates, ingest, notify
+from . import prompts as P
+from . import roles as R
 from .config import Config
 from .decisions import record
 from .fsm import LotState
-from .models import (Plat, Lot, Attempt, Verdict, Finding, Criterion,
-                     Session as SessionRow, Transcript, LogChunk)
+from .models import Attempt, Criterion, Finding, LogChunk, Lot, Plat, Transcript, Verdict
+from .models import Session as SessionRow
 
 
 class Halt(Exception):
@@ -354,14 +359,20 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     except ingest.ContractError as e:
         if res.stdout:
             db.add(Transcript(attempt_id=a.id, body=res.stdout[:4_000_000]))
-        d = record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
-                   actor="system", actor_detail="ingest.validate", kind="transition",
-                   decision="BLOCKED - termination contract not honoured",
-                   rationale=str(e),
-                   inputs={"permission_denials": len(res.permission_denials),
-                           "exit_code": res.exit_code, "stderr": res.stderr[-600:]},
-                   apply=lambda: setattr(lot, "state", LotState.BLOCKED.value))
+        record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
+               actor="system", actor_detail="ingest.validate", kind="transition",
+               decision="BLOCKED - termination contract not honoured",
+               rationale=str(e),
+               inputs={"permission_denials": len(res.permission_denials),
+                       "exit_code": res.exit_code, "stderr": res.stderr[-600:]},
+               apply=lambda: setattr(lot, "state", LotState.BLOCKED.value))
         db.commit()
+        # This path blocked a lot silently while every other block notified. A
+        # contract failure is usually environmental and always needs a person.
+        notify.send(notify.Event(
+            kind="blocked", anchor=plat.anchor, lot=lot.key, urgent=True,
+            title="termination contract not honoured",
+            detail=str(e)[:300]), cfg.notify)
         raise Halt(str(e))
 
     last = ingest.persist(db, plat=plat, lot=lot, attempt=a, verdict=verdict,

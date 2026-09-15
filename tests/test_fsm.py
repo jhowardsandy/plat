@@ -5,9 +5,18 @@ every path terminates, no path exceeds MAX_ATTEMPTS, oscillation always reaches 
 human, and a failed gate never advances.
 """
 import itertools
+
 import pytest
-from plat.fsm import (decide, Ctx, LotState, MAX_ATTEMPTS, advance, gate_passed,
-                      criteria_met, oscillating)
+
+from plat.fsm import (
+    MAX_ATTEMPTS,
+    Ctx,
+    LotState,
+    advance,
+    criteria_met,
+    decide,
+    gate_passed,
+)
 
 GOOD_GATE = {"tests_failed": 0, "diff_files": 3}
 BAD_GATE = {"tests_failed": 2, "diff_files": 3}
@@ -122,6 +131,7 @@ def test_pause_is_reachable_from_plat_status():
     """Ctx.paused was honoured by the FSM and never populated by build_ctx, so
     pausing did nothing at all. Guard the wiring, not just the rule."""
     import inspect
+
     from plat import runner
     src = inspect.getsource(runner.build_ctx)
     assert "paused=" in src and 'status == "paused"' in src
@@ -131,21 +141,21 @@ def test_pause_is_reachable_from_plat_status():
 
 def test_branch_name_does_not_double_the_ticket_prefix():
     """DEV-3911 produced dev-dev-3911-<slug>. The convention is dev-<n>-<slug>."""
-    import re
     src = __import__("plat.worktree", fromlist=["x"])
     assert 'f"dev-{m.group(2)}-{slug}"' in __import__("inspect").getsource(src.ensure)
 
 
 def test_anchor_column_fits_more_than_a_ticket_key():
     """A review anchor is review/<repo>@<branch> and blew a varchar(32)."""
-    from plat.models import Plat, Finding
+    from plat.models import Finding, Plat
     assert Plat.__table__.c.anchor.type.length >= 160
     assert Finding.__table__.c.anchor.type.length >= 160
 
 
 # ---------------------------------------------------------------- converge mode
-from plat.fsm import Mode, parse_objective, improving   # noqa: E402
-import operator                                          # noqa: E402
+import operator  # noqa: E402
+
+from plat.fsm import Mode, improving  # noqa: E402
 
 CONV = dict(deps_met=True, mode=Mode.CONVERGE, objective=">= 80")
 

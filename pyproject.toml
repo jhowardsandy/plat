@@ -35,6 +35,21 @@ plat = "plat.cli:app"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# F and I are the ones that catch real problems here: undefined names, unused
+# imports, import order. The E rules below are deliberate style in this codebase
+# rather than oversights, and suppressing them is honest where renaming 45 call
+# sites to satisfy a linter is not.
+select = ["E", "F", "I"]
+ignore = [
+  "E501",  # many long lines are comments carrying reasoning; wrapping them hurts
+  "E702",  # `db.add(a); db.flush()` pairs two halves of one action on purpose
+  "E741",  # `l` is a lot, consistently, in code that already says so
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

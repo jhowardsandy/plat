@@ -16,9 +16,11 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 
-from . import adapters, gates, ingest, prompts as P, roles as R
+from . import adapters, gates, ingest
+from . import prompts as P
+from . import roles as R
 from .config import Config, home
-from .models import Plat, Lot, Attempt, Verdict, Finding
+from .models import Attempt, Finding, Lot, Plat, Verdict
 
 SEVERITY = {"low": 0, "medium": 1, "high": 2}
 

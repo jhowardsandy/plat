@@ -1,6 +1,7 @@
 """A regression test for a bug that installed zero views and looked like an empty db."""
 import re
 from pathlib import Path
+
 from plat.db import _split
 
 SQL = Path(__file__).parent.parent / "src" / "plat" / "views.sql"
@@ -31,6 +32,7 @@ def test_views_are_dropped_before_columns_are_altered():
     """Postgres refuses to alter the type of a column a view selects. Widening
     plats.anchor failed exactly this way, silently leaving varchar(32)."""
     import inspect
+
     from plat import db
     src = inspect.getsource(db.init)
     assert src.index("DROP VIEW") < src.index("for stmt in ADDITIVE"), \

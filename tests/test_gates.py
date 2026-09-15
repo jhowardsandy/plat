@@ -1,7 +1,7 @@
 """L2b - the gate, against a real repo and a real test runner."""
 import subprocess
 from pathlib import Path
-import pytest
+
 from plat import gates
 
 
@@ -85,6 +85,7 @@ def test_a_readable_reporter_is_counted(tmp_path):
 def test_converge_baseline_is_not_taken_from_an_uncounted_gate():
     """Guarding a metric with a baseline of 0 guards nothing."""
     import inspect
+
     from plat import cli
     src = inspect.getsource(cli.plan)
     assert "sm.tests_passed if sm.counted else 0" in src

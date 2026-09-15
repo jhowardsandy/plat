@@ -5,6 +5,7 @@ had been pushed, reviewed or merged. A ledger that is wrong is worse than a ledg
 that is empty, because you stop checking it.
 """
 import inspect
+
 import pytest
 from sqlalchemy import text
 

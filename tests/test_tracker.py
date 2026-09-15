@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+
 from plat import tracker
 
 
@@ -51,6 +52,7 @@ def test_unknown_never_reads_as_a_collision():
 
 def test_plan_warns_before_squatting_on_an_existing_ticket():
     import inspect
+
     from plat import cli
     src = inspect.getsource(cli.plan)
     assert "_tr.collides(" in src and "already exists" in src

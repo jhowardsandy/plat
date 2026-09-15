@@ -1,10 +1,6 @@
 """`plat setup`. A wizard that only asks is a form, and a form records answers
 that cannot work."""
 import inspect
-from pathlib import Path
-
-import pytest
-import yaml
 
 from plat import setup as S
 from plat.config import CONFIG_TEMPLATE, DEFAULTS, write_default_config

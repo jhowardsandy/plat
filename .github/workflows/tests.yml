@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Eighteen tests exercise the views, the TUI and the delivered/closed split
+    # against real SQL. They skip cleanly without a database, which means CI
+    # without one would be green and prove less than it appears to.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: plat
+          POSTGRES_PASSWORD: plat
+          POSTGRES_DB: plat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U plat"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      PLAT_DATABASE_URL: postgresql+psycopg://plat:plat@localhost:5432/plat
+      PLAT_HOME: ${{ runner.temp }}/plat-home
+      PLAT_WORKSPACE: ${{ runner.temp }}/workspace
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: install
+        run: uv sync --all-extras --dev || uv pip install -e ".[dev]" || uv pip install -e .
+
+      - name: lint
+        run: uvx ruff check src tests
+
+      - name: schema and views
+        run: uv run plat init
+
+      - name: tests
+        run: uv run pytest -q --durations=5
+
+      # A green suite against a database is not the same as a working install:
+      # `uv run` uses the project venv, and a dependency added without reaching
+      # the installed tool once shipped `plat top` broken with 69 tests passing.
+      - name: the installed binary actually runs
+        run: |
+          uv tool install --editable .
+          plat --help > /dev/null
+          plat top --help > /dev/null
+          plat review --help > /dev/null

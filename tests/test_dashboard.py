@@ -5,6 +5,7 @@ with no error anywhere — the same silent-blank failure as a stale view.
 """
 import json
 from pathlib import Path
+
 import pytest
 
 DASH = Path(__file__).parent.parent / "grafana" / "dashboards" / "plat.json"
@@ -46,6 +47,7 @@ def test_every_command_is_documented_somewhere():
     review, setup and sync all shipped undocumented."""
     import re
     from pathlib import Path
+
     from plat.cli import app
     root = Path(__file__).parent.parent
     blob = "\n".join((root / f).read_text() for f in

@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from pathlib import Path
+
 from . import claude, codex
-from .base import Role, AgentResult
+from .base import AgentResult, Role
 
 PROVIDERS = {"claude": claude, "codex": codex}
 

@@ -5,8 +5,11 @@ own .worktrees/ convention, alongside the ones you create by hand. Two homes for
 worktrees depending on who made them is exactly the drift to avoid.
 """
 from __future__ import annotations
-import re, subprocess
+
+import re
+import subprocess
 from pathlib import Path
+
 from .config import Config
 
 
