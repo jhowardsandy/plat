@@ -129,7 +129,9 @@ def setup(
     c.print("  [dim]Order is fixed — code, review, docs, quality — because it is "
             "semantic, not a preference. You choose which run.[/dim]")
     phases = ["code", "review"]
-    if yes or Confirm.ask("  add a second 'quality' review pass?", default=False):
+    # --yes takes the DEFAULT, and the default here is no. `yes or ask(...)`
+    # short-circuited to true and silently turned on a phase nobody chose.
+    if not yes and Confirm.ask("  add a second 'quality' review pass?", default=False):
         phases.append("quality")
     if "gemini" not in usable:
         c.print("  [dim]docs needs a gemini adapter, which is not implemented — off[/dim]")

@@ -68,3 +68,14 @@ def test_nothing_is_recorded_as_shipped_that_has_not_been(conn):
         "SELECT count(*) FROM plats WHERE kind='plat' AND closed_at IS NOT NULL "
         "AND delivered_at IS NULL")).scalar()
     assert n == 0, "a plat is closed without ever having been delivered"
+
+
+def test_the_demo_seeds_only_states_that_could_really_happen(conn):
+    """`plat demo` once seeded a plat closed without ever being delivered — data
+    the schema permits and the world does not. A fresh clone running demo then
+    pytest saw a failure it had done nothing to cause."""
+    from sqlalchemy import text
+    bad = conn.execute(text(
+        "SELECT anchor FROM plats WHERE origin_id = 'demo' "
+        "AND closed_at IS NOT NULL AND delivered_at IS NULL")).scalars().all()
+    assert not bad, f"demo plats closed but never delivered: {bad}"

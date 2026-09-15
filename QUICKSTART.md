@@ -26,6 +26,16 @@ Otherwise let Plat run one:
 docker compose -f docker-compose.plat.yml --profile db up -d
 ```
 
+That publishes **5432**. If something already has that port — you probably have a
+Postgres — pick another and tell Plat about it:
+
+```bash
+PLAT_DB_PORT=5433 docker compose -f docker-compose.plat.yml --profile db up -d
+export PLAT_DATABASE_URL="postgresql+psycopg://plat:plat@localhost:5433/plat"
+```
+
+The same command also brings up Grafana on :3033, which `plat ui` uses later.
+
 ## 3. Install
 
 ```bash
@@ -201,4 +211,6 @@ git -C <worktree> diff origin/main..HEAD
 | `BLOCKED — termination contract not honoured` | the agent never wrote valid JSON. Check `permission_denials` first; it is usually environmental |
 | `BLOCKED — oscillation` | the same finding twice: coder and reviewer are talking past each other. Rule on it yourself, then `plat reopen --note "<the ruling>"` |
 | `0 agents live` while one is clearly running | you are on an old install — `uv tool install --editable . --force` |
+| the database will not start | port 5432 is taken; see the `PLAT_DB_PORT` note above |
+| `plat ui` shows an empty dashboard | nothing is running, which is correct — `plat demo` seeds a board to look at |
 | costs shown with `~` | estimated from tokens; Codex and Gemini do not report dollars |
