@@ -11,7 +11,9 @@ variables.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import tomllib
 import uuid
 from dataclasses import dataclass, field
@@ -91,6 +93,88 @@ on       = ["blocked", "delivered", "budget"]
 '''
 
 
+def template_blocks() -> dict[str, str]:
+    """Split the shipped template into addressable blocks, keyed by what each
+    defines, with its explanatory comments attached.
+
+    This is what makes backfilling possible: a config written before a setting
+    existed can gain that setting AND the paragraph explaining it, without
+    touching anything already there.
+    """
+    blocks: dict[str, str] = {}
+    buf: list[str] = []
+    table: str | None = None          # once inside [notify], its keys are ITS keys
+    for line in CONFIG_TEMPLATE.splitlines():
+        s = line.strip()
+        is_table = s.startswith("[") and s.endswith("]") and not s.startswith("#")
+        if is_table and table:        # a new table closes the previous one
+            blocks[table] = "\n".join(buf).strip("\n")
+            buf = []
+        buf.append(line)
+        if is_table:
+            table = s[1:-1].split(".")[0]
+            continue
+        if table:
+            continue                  # belongs to the open table, not top level
+        if "=" in s and not s.startswith("#"):
+            blocks[s.split("=", 1)[0].strip()] = "\n".join(buf).strip("\n")
+            buf = []
+    if table:
+        blocks[table] = "\n".join(buf).strip("\n")
+    return blocks
+
+
+def backfill(path: Path | None = None) -> list[str]:
+    """Add settings the file predates. Never touches what is already there.
+
+    write_default_config only writes when the file is ABSENT, so every setting
+    added afterwards was invisible: a config could have a desktop notifier armed
+    and no mention of it, which makes "what is actually running" unanswerable by
+    reading the file.
+    """
+    p = path or config_path()
+    if not p.exists():
+        write_default_config()
+        return ["(created)"]
+    # read from the file being backfilled, not the global one: a path argument
+    # that is quietly ignored works right up until someone passes a different path
+    have = _file_values(p)
+    body = p.read_text().rstrip("\n")
+    scalars, tables, added = [], [], []
+    for key, block in template_blocks().items():
+        if key in have:
+            continue
+        added.append(key)
+        (tables if block.lstrip().startswith("[") or "\n[" in block
+         else scalars).append(_fill(block))
+    if not added:
+        return []
+
+    # A bare `key = value` appended after an existing [table] header becomes a
+    # key OF THAT TABLE -- phases once landed as tracker.phases. Scalars must go
+    # in before the first table; only tables are safe to append.
+    lines = body.splitlines()
+    first_table = next((i for i, ln in enumerate(lines)
+                        if re.match(r"^\s*\[[^#]", ln)), len(lines))
+    # rewind past the comment paragraph that introduces that table
+    while first_table > 0 and lines[first_table - 1].lstrip().startswith("#"):
+        first_table -= 1
+    head, tail = lines[:first_table], lines[first_table:]
+    if scalars:
+        head = head + [""] + "\n\n".join(scalars).splitlines()
+    out = "\n".join(head + ([""] if tail and head else []) + tail).rstrip("\n")
+    if tables:
+        out += "\n\n" + "\n\n".join(tables)
+    p.write_text(out + "\n")
+    return added
+
+
+def _fill(block: str) -> str:
+    for k, v in DEFAULTS.items():
+        block = block.replace("{" + k + "}", json.dumps(v) if isinstance(v, list) else str(v))
+    return block
+
+
 @dataclass(frozen=True)
 class Config:
     workspace_root: Path
@@ -103,6 +187,9 @@ class Config:
     stale_after_s: int = 600
     max_attempts: int = 3
     phases: list = field(default_factory=lambda: ["code", "review"])
+    # Where each value came from: "env", "config.toml", or "default". Without it
+    # you cannot answer "why is this happening" from the file alone.
+    sources: dict = field(default_factory=dict)
 
     @property
     def worktrees_root(self) -> Path:
@@ -135,8 +222,8 @@ def write_default_config(**overrides) -> Path:
     return p
 
 
-def _file_values() -> dict:
-    p = config_path()
+def _file_values(p: Path | None = None) -> dict:
+    p = p or config_path()
     if not p.exists():
         return {}
     try:
@@ -149,8 +236,17 @@ def load() -> Config:
     h = home()
     f = _file_values()
 
+    src: dict[str, str] = {}
+
     def pick(key: str, env: str):
-        return os.environ.get(env) or f.get(key) or DEFAULTS[key]
+        if os.environ.get(env):
+            src[key] = f"env {env}"
+            return os.environ[env]
+        if f.get(key) is not None:
+            src[key] = "config.toml"
+            return f[key]
+        src[key] = "default"
+        return DEFAULTS[key]
 
     origin = h / "origin_id"
     if not origin.exists():
@@ -162,9 +258,23 @@ def load() -> Config:
         broker_url=str(pick("broker_url", "PLAT_BROKER_URL")),
         roles_path=Path(os.environ.get("PLAT_ROLES", h / "roles.yaml")),
         origin_id=origin.read_text().strip(),
-        notify=(f.get("notify") or DEFAULTS["notify"]),
-        tracker=(f.get("tracker") or {}),
-        phases=list(f.get("phases") or DEFAULTS["phases"]),
+        notify=_pick_table(f, src, "notify"),
+        tracker=_pick_table(f, src, "tracker", {}),
+        phases=list(pick("phases", "PLAT_PHASES")),
         stale_after_s=int(pick("stale_after_s", "PLAT_STALE_AFTER_S")),
         max_attempts=int(pick("max_attempts", "PLAT_MAX_ATTEMPTS")),
+        sources=src,
     )
+
+
+def _pick_table(f: dict, src: dict, key: str, fallback=None):
+    if f.get(key):
+        src[key] = "config.toml"
+        return f[key]
+    src[key] = "default"
+    return DEFAULTS.get(key, fallback if fallback is not None else {})
+
+
+def redact(dsn: str) -> str:
+    """Hide the password so `plat config` can be pasted into an issue."""
+    return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", dsn)

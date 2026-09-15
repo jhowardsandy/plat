@@ -376,6 +376,14 @@ candidate model once to find what your **account** can reach, and counts the rep
 under the workspace root you give it. Installed is not the same as permitted — a
 correctly-spelled model can be refused by the plan behind it, four seconds in.
 
+`plat config` prints what is actually **in effect** and where each value came
+from — env, your file, or the shipped default. That distinction matters more than
+it sounds: `plat init` only ever wrote a config file that did not exist, so every
+setting added afterwards ran from the defaults and appeared nowhere. A config with
+a desktop notifier armed and no mention of it makes "why did that happen" a
+question the file cannot answer. `plat init` now backfills those settings, with
+the paragraphs explaining them, and touches nothing already there.
+
 Phase **order** is deliberately not configurable. `code → review → docs → quality`
 is semantic rather than a preference: you cannot review before you code. What you
 choose is which of them run, and that is `phases` in `config.toml` or per-plat.
