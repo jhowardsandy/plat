@@ -56,3 +56,26 @@ def test_every_command_is_documented_somewhere():
     mentioned = set(re.findall(r"`?plat ([a-z_]+)", blob))
     undocumented = real - mentioned
     assert not undocumented, f"undocumented commands: {sorted(undocumented)}"
+
+
+def test_the_readme_does_not_claim_parallelism_it_does_not_have():
+    """The headline said lots are "worked in parallel". They run in a for loop.
+    The most prominent sentence in the repo was the least true one."""
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+    readme = (root / "README.md").read_text()
+    head = readme.split("\n\n")[1]           # the bold tagline
+    assert "in parallel" not in head, "the headline overclaims again"
+    low = readme.lower()
+    assert "one after another" in low or "not in parallel" in low, \
+        "the README must say lots are serial somewhere a reader will find it"
+
+
+def test_depends_on_is_documented_with_its_limitation():
+    """It appears in example.plat.yaml and the planner prompt, and was explained
+    in none of the three documents."""
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+    guide = (root / "docs" / "GUIDE.md").read_text()
+    assert "depends_on" in guide
+    assert "does not pass" in guide or "does not hand" in guide

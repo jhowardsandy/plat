@@ -242,6 +242,34 @@ already been found in that repo, and whether it stuck. A finding *dismissed* wit
 reason is the most valuable row there — it is what stops a reviewer re-raising a
 settled point.
 
+### Dependencies between lots, and what they do not do
+
+```yaml
+lots:
+  - key: api
+    repo: services/api
+  - key: manifests
+    repo: infra/manifests
+    depends_on: [api]        # runs after `api` reaches DONE
+```
+
+`depends_on` is an **ordering** constraint and nothing more. It gates the second
+lot on the first reaching `DONE` — it does not pass anything from A to B. Lot B's
+context is its own lot description plus the plat map **as written before A ran**,
+so if B needs to know what A actually built, it will not.
+
+Two ways to live with that until content handoff exists:
+
+- **Write the contract into the plat map** rather than leaving it to be discovered.
+  "The endpoint will be `GET /api/health/ping` and will return a `version` field"
+  is something both lots can read up front.
+- **Give B a gate that fails without A's half.** A test that exercises the seam is
+  worth more than a dependency edge, because it is checked rather than assumed.
+
+Be sparse with edges either way. A false dependency serialises work for no reason,
+and today lots are serial regardless — an edge only buys you ordering you can rely
+on, not speed.
+
 ## 6. Gates
 
 The gate is per-lot configuration, not inference:

@@ -233,3 +233,6 @@ git -C <worktree> diff origin/main..HEAD
 | the database will not start | port 5432 is taken; see the `PLAT_DB_PORT` note above |
 | `plat ui` shows an empty dashboard | nothing is running, which is correct — `plat demo` seeds a board to look at |
 | costs shown with `~` | estimated from tokens; Codex and Gemini do not report dollars |
+| a multi-lot plat is no faster | lots run one after another; parallelism is the unbuilt Celery dispatcher |
+| lot B did not know what lot A built | `depends_on` orders lots, it does not hand over content — put the contract in the plat map |
+| `unknown provider 'gemini'` | the Gemini adapter is a stub; point `documenter` at claude or drop the `docs` phase |
