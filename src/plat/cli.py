@@ -193,14 +193,19 @@ def init():
     """Create the schema and install the views. Idempotent."""
     for s in DB.init():
         c.print(f"  [dim]{s}[/dim]")
-    from .config import config_path, write_default_config
+    from .config import config_path
     cfg = load()
     if not cfg.roles_path.exists():
         shutil.copy(Path(__file__).parent / "roles.default.yaml", cfg.roles_path)
         c.print(f"[green]wrote[/green] {cfg.roles_path}")
-    if not config_path().exists():
-        write_default_config()
+    from .config import backfill
+    added = backfill()
+    if added == ["(created)"]:
         c.print(f"[green]wrote[/green] {config_path()}  [dim]edit it to taste[/dim]")
+    elif added:
+        c.print(f"[green]added to {config_path()}[/green]: {', '.join(added)}")
+        c.print("  [dim]settings that postdate your config file — they were already "
+                "in effect from the defaults, just not written down[/dim]")
     c.print("[green]ready[/green]")
     c.print(f"  db        {cfg.database_url.split('@')[-1]}")
     c.print(f"  workspace {cfg.workspace_root}")
@@ -208,6 +213,51 @@ def init():
     if not cfg.workspace_root.exists():
         c.print(f"  [yellow]workspace_root does not exist[/yellow] — set it in "
                 f"{config_path()} or $PLAT_WORKSPACE")
+
+
+@app.command()
+def config(
+    show_all: bool = typer.Option(False, "--all", "-a", help="include roles"),
+):
+    """What is actually in effect, and where each value came from.
+
+    A config file only shows what someone wrote in it. Settings added after that
+    file was created run from the defaults and appear nowhere — which makes "why
+    is this happening" unanswerable by reading the file. This answers it.
+    """
+    from .config import _file_values, config_path, redact, template_blocks
+    cfg = load()
+    colour = {"default": "dim", "config.toml": "green"}
+    t = Table(box=None, header_style="dim")
+    for col in ("setting", "value", "from"):
+        t.add_column(col, overflow="fold")
+    for key, val in (("database_url", redact(cfg.database_url)),
+                     ("workspace_root", str(cfg.workspace_root)),
+                     ("broker_url", cfg.broker_url),
+                     ("phases", ", ".join(cfg.phases)),
+                     ("max_attempts", cfg.max_attempts),
+                     ("stale_after_s", cfg.stale_after_s),
+                     ("notify", json.dumps(cfg.notify)),
+                     ("tracker", (cfg.tracker or {}).get("cmd", "—"))):
+        src = cfg.sources.get(key, "default")
+        col = colour.get(src, "yellow")          # yellow = an env var is overriding
+        t.add_row(key, str(val), f"[{col}]{src}[/{col}]")
+    c.print(t)
+    c.print(f"\n  [dim]file:[/dim]  {config_path()}")
+    c.print(f"  [dim]roles:[/dim] {cfg.roles_path}")
+
+    missing = [k for k in template_blocks() if k not in _file_values()]
+    if missing:
+        c.print(f"\n[yellow]running from defaults, absent from your file:[/yellow] "
+                f"{', '.join(missing)}")
+        c.print("  [dim]`plat init` writes them in, with their explanations[/dim]")
+    if show_all:
+        c.print("\n[bold]roles[/bold]")
+        for name, r in (cfg.roles().get("roles") or {}).items():
+            esc = r.get("escalate") or {}
+            c.print(f"  {name:<22} {r.get('provider')}/{r.get('model')}"
+                    f"  effort={r.get('effort', '—')}"
+                    + (f"  escalates at {', '.join(esc)}" if esc else ""))
 
 
 @app.command()
