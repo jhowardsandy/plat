@@ -1,6 +1,6 @@
 # Plat
 
-**One ticket, divided into numbered lots, worked in parallel by agents across repos, reviewed by a different model than wrote it, and recorded as a single instrument.**
+**One ticket, divided into numbered lots, worked by agents across repos, reviewed by a different model than wrote it, and recorded as a single instrument.**
 
 Plat is a deterministic orchestrator for coding agents. You plan a ticket into *lots*; Plat runs each one through code → gate → review → fix, escalating models on retry, and stops at a human whenever it should. Every decision — by the system, by an agent, by you — is recorded and queryable long after the branch is gone.
 
@@ -126,11 +126,31 @@ Plat calls this **API-equivalent cost**, and that is the label you will see in
 `plat history` and `plat top`. Claude reports it; Codex and Gemini report only
 tokens, so theirs is estimated from published rates and shown with a `~`.
 
-## Status
+## Status, and what it does not do yet
 
-Working and used in anger, but early. **v0** runs a single lot inline: `PENDING → CODING → GATE → REVIEWING → DONE | BLOCKED`, with session resume, model escalation, oscillation detection and budget ceilings.
+Working and used in anger, but early. A plat runs `PENDING → CODING → GATE →
+REVIEWING → DONE | BLOCKED` per lot, with session resume, model escalation,
+oscillation detection and budget ceilings, and it has taken real tickets from a
+ticket file through to a merged pull request.
 
-Not built yet: the Celery dispatcher and multi-lot DAG, closing the traverse, recording, and the abstract. See [docs/GUIDE.md](docs/GUIDE.md#what-is-not-built-yet).
+Three limits worth knowing **before** you plan a multi-lot run, because each is
+invisible until it surprises you:
+
+> **Lots run one after another, not in parallel.** `plat start` walks them in a
+> loop. Splitting by repo buys isolation and an independent review per lot — it
+> does not buy wall-clock. Real parallelism is the Celery dispatcher, and
+> `dispatch/` is four stubs today.
+
+> **`depends_on` orders lots; it does not hand anything over.** Lot B runs after
+> lot A, and B's context is the plat map as written *before* A ran. If B genuinely
+> needs to see what A built, it will not. Keep the contract between lots in the
+> plat map explicitly, or give B a gate that would fail if A's half is missing.
+
+> **`docs` cannot run**, because its default role points at Gemini and that adapter
+> is a stub. Point it at Claude, or leave the phase off.
+
+Also unbuilt: closing the traverse, the recording package, the abstract, and
+Alembic. [docs/GUIDE.md §10](docs/GUIDE.md) is the honest list.
 
 ## Licence
 
