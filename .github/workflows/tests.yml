@@ -30,10 +30,13 @@ jobs:
           --health-cmd "pg_isready -U plat"
           --health-interval 5s --health-timeout 3s --health-retries 10
 
+    # The `runner` context is not available in job-level env -- only at step
+    # level -- and using it here fails the whole workflow at parse time, in 0s,
+    # with "workflow file issue" and no line number.
     env:
       PLAT_DATABASE_URL: postgresql+psycopg://plat:plat@localhost:5432/plat
-      PLAT_HOME: ${{ runner.temp }}/plat-home
-      PLAT_WORKSPACE: ${{ runner.temp }}/workspace
+      PLAT_HOME: /tmp/plat-home
+      PLAT_WORKSPACE: /tmp/plat-workspace
 
     steps:
       - uses: actions/checkout@v4
