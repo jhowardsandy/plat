@@ -1056,6 +1056,12 @@ def history(limit: int = 25,
                   f"${r['spend']:.2f}",
                   "[red]⚠ roster gap[/red]" if r["roster_gap"] else "[dim]·[/dim]")
     c.print(t)
+    total = sum(r["spend"] for r in rows)
+    lots = sum(r["lots"] for r in rows)
+    if rows:
+        c.print(f"\n  [bold]${total:.2f}[/bold] across {len(rows)} plat(s), "
+                f"{lots} lot(s) — [dim]API-equivalent: what this would have cost "
+                f"paying per token rather than through a subscription[/dim]")
     n_await = sum(1 for r in rows if r["awaiting_you"])
     if n_await:
         c.print(f"[yellow]{n_await} plat(s) delivered and not closed[/yellow] — "

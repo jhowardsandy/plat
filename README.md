@@ -106,18 +106,25 @@ reviewer.correctness:
 
 Adapters ship for **Claude Code**, **Codex** and **Gemini**. All three are driven headlessly behind one uniform contract, so swapping a role's provider is a config change.
 
-## A note on the dollar figures
+## What the dollar figures mean
 
 Plat shells out to CLIs you are already logged into, so on a Claude or ChatGPT
-subscription the work draws against your plan rather than billing per token. The
-costs shown everywhere — `plat status`, `plat history`, budget ceilings, the
-`plat shape` menu — are **API-equivalent cost**: what the run would have cost at
-API rates, which is a different thing from money leaving your account.
+subscription the work draws against your plan rather than billing per token.
 
-They are still the right number to reason with: it is the honest relative measure
-between two shapes, a good proxy for how much of your plan a run consumes, and the
-actual bill if you point Plat at API keys. Codex and Gemini are estimated from
-token counts rather than reported, and show a `~`.
+The costs shown everywhere — `plat status`, `plat history`, budget ceilings, the
+`plat shape` menu — answer a different and more useful question:
+
+> **What would this work cost if you were paying per token instead of through a
+> subscription?**
+
+That is the number worth having. It says whether the economics hold at volume, what
+a run is worth against an engineer's time, which shape is genuinely cheaper, and
+whether more seats or API keys is the right call. It is also the real bill the day
+you point Plat at an API key.
+
+Plat calls this **API-equivalent cost**, and that is the label you will see in
+`plat history` and `plat top`. Claude reports it; Codex and Gemini report only
+tokens, so theirs is estimated from published rates and shown with a `~`.
 
 ## Status
 

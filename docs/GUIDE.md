@@ -187,12 +187,17 @@ dropped. Gemini has no equivalent and ignores it rather than inventing one.
 **Cost, and what the number means.** Claude reports `total_cost_usd`; Codex and
 Gemini report only tokens, so theirs is estimated and shown with a `~`.
 
-But all of it is **API-equivalent cost**, not a bill. Plat drives CLIs you are
-already signed into, so on a subscription the work draws against your plan's
-limits and nothing is charged per token. The figure is still the number to reason
-with — it compares two shapes honestly, it proxies how much of your plan a run
-eats, and it is the real cost if you run Plat on API keys — but a budget ceiling
-gates notional spend rather than money.
+All of it is **API-equivalent cost**: what the run would cost if you were paying
+per token rather than through a subscription. Plat drives CLIs you are already
+signed into, so on a plan nothing is charged per token — but that is the question
+worth answering anyway.
+
+It tells you whether the economics hold at volume, what a run is worth set against
+an engineer's time, which of two shapes is genuinely cheaper, and whether more
+seats or API keys is the right call. It is also the literal bill the day you point
+Plat at an API key. A budget ceiling gates that figure, so on a subscription it
+caps notional spend — which is still the right thing to cap, because it is
+proportional to what you are actually consuming.
 
 ### Choosing the shape before planning it
 
