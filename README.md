@@ -83,7 +83,7 @@ questions will happily record an answer that cannot work.
 | `plat review [repo]` | **cross-model review of a branch you already wrote** — no plan, no worktree, no coder |
 | `plat config` | what is actually in effect, and where each value came from |
 | `plat sync` · `plat close` | what the issue tracker says; mark a delivered plat shipped |
-| `plat pause` · `plat reopen` · `plat demo` | the control surface, and seeded data |
+| `plat pause` · `plat abort` · `plat reopen` · `plat demo` | the control surface, and seeded data |
 | `plat ui` | the Grafana dashboard on :3033 |
 
 ## Which models

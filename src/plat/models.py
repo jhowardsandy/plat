@@ -109,6 +109,11 @@ class Attempt(Base):
     # Non-zero means the agent was BLOCKED, not merely unproductive -- the failure
     # that otherwise reads as "it did nothing useful". Persisted, not just logged.
     permission_denials: Mapped[int] = mapped_column(Integer, default=0)
+    # The agent subprocess. It is started in its OWN session, so closing the
+    # terminal that launched it does not kill it -- which is good (no half-written
+    # files) and bad (it keeps running, unwatched, against a lot whose heartbeat
+    # has gone cold). A later session needs this to tell those apart.
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = _now()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

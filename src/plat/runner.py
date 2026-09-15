@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session as DbSession
 from . import adapters, fsm, gates, ingest, notify
 from . import prompts as P
 from . import roles as R
+from .adapters import base
 from .config import Config
 from .decisions import record
 from .fsm import LotState
@@ -59,6 +60,30 @@ def progress_history(db, lot) -> tuple[float, ...]:
     return tuple(float(x) for x in out if x is not None)
 
 
+def live_agent(db, lot) -> Attempt | None:
+    """An agent still running on this lot, from a session that is no longer watching.
+
+    Agents are spawned in their own process group, so closing the terminal that
+    started one does not stop it. That is mostly a mercy -- no half-written files --
+    but it means a later session can find a lot whose heartbeat went cold while the
+    work underneath it is still moving. Gating a moving target is worse than waiting.
+    """
+    a = db.scalars(
+        select(Attempt).where(Attempt.lot_id == lot.id, Attempt.pid.isnot(None),
+                              Attempt.finished_at.is_(None))
+        .order_by(Attempt.id.desc())).first()
+    if a is None:
+        return None
+    if base.process_alive(a.pid, (a.role_binding or {}).get("cmd", ""),
+                          since=a.started_at):
+        return a
+    # It died without finishing -- killed, crashed, or its session went down with
+    # it. Clear the pid so the next caller does not have to re-check a dead one.
+    a.pid = None
+    db.commit()
+    return None
+
+
 def build_ctx(db, plat, lot) -> fsm.Ctx:
     cfg_l = lot.config or {}
     gate_a = _latest(db, lot, phases=["gate"])
@@ -93,6 +118,16 @@ def _out_dir(cfg: Config, plat, lot, phase, n) -> Path:
 def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
             log=print) -> str:
     parent = None
+    live = live_agent(db, lot)
+    if live is not None:
+        started = live.started_at
+        age = (datetime.now(started.tzinfo) - started).total_seconds()
+        log(f"  [{lot.state} a{lot.attempt}] -> wait: an agent from a previous "
+            f"session is still running on this lot")
+        log(f"    {live.phase}: {live.provider}/{live.model} pid {live.pid}, "
+            f"{age / 60:.0f}m in")
+        log(f"    let it finish, or: plat abort {plat.anchor} {lot.key}")
+        return lot.state
     while True:
         db.refresh(plat)          # pause may have been set from another process
         ctx = build_ctx(db, plat, lot)
@@ -190,6 +225,7 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
                   baseline_passed=int(gcfg.get("baseline_passed", 0)))
     a.exit_code = g.exit_code
     a.finished_at = datetime.now(timezone.utc)
+    a.pid = None             # finished: nothing to find alive, nothing to abort
     db.add(Verdict(attempt_id=a.id, raw=g.as_dict(),
                    tests_passed=g.tests_passed, tests_failed=g.tests_failed))
     ok = g.tests_failed == 0 and g.diff_files > 0
@@ -308,6 +344,20 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     seq = itertools.count()
     residue = [""]          # a chunk can end mid-line; the tail belongs to the next
 
+    def _pid(pid: int, cmd: str):
+        # Its own transaction, like _chunk: the runner's session holds an open
+        # transaction for the whole agent run, and a pid nobody else can read
+        # until the agent finishes is a pid that tells nobody anything.
+        from .db import session as _s
+        try:
+            with _s() as s2:
+                s2.execute(update(Attempt).where(Attempt.id == a.id)
+                           .values(pid=pid,
+                                   role_binding={**(a.role_binding or {}), "cmd": cmd}))
+                s2.commit()
+        except Exception:
+            pass
+
     def _chunk(raw: str):
         # Own session, own transaction. Writing through the runner's session would
         # keep every chunk inside its open transaction until the agent finished --
@@ -327,13 +377,14 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
             pass
 
     with _Heartbeat(lot.id):
-        res = adapters.run(role, pf, wt, on_chunk=_chunk)
+        res = adapters.run(role, pf, wt, on_chunk=_chunk, on_pid=_pid)
     a.exit_code = res.exit_code
     a.cost_usd = res.cost_usd
     a.cost_estimated = res.cost_estimated
     a.permission_denials = len(res.permission_denials)
     a.tokens_in, a.tokens_out = res.tokens_in, res.tokens_out
     a.finished_at = datetime.now(timezone.utc)
+    a.pid = None             # finished: nothing to find alive, nothing to abort
     lot.heartbeat_at = datetime.now(timezone.utc)
     db.refresh(lot)          # the heartbeat thread moved it underneath us
     log(f"    exit={res.exit_code} {res.duration_s:.0f}s "

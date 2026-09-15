@@ -704,6 +704,89 @@ def pause(anchor: str = typer.Argument(None), resume: bool = typer.Option(False,
 
 
 @app.command()
+def abort(anchor: str = typer.Argument(None),
+          lot: str = typer.Argument(None, help="default: every unfinished lot"),
+          yes: bool = typer.Option(False, "--yes", "-y"),
+          note: str = typer.Option("", "--note", "-n", help="why you stopped it")):
+    """Stop an agent now and mark the work aborted.
+
+    `pause` lets in-flight agents finish; this does not. It signals the agent's
+    whole process group -- the agent and the test runners it started -- and marks
+    the lot ABORTED. Whatever it had already written to the worktree stays there.
+
+    Reach for it when an agent from a closed session is still running and you do
+    not want what it is producing. `plat reopen` puts an aborted lot back in play.
+    """
+    from datetime import datetime, timezone
+
+    from rich.prompt import Confirm
+
+    from .adapters.base import process_alive, terminate
+    from .decisions import record
+    from .runner import live_agent
+    with DB.session() as s:
+        p = _resolve(s, anchor)
+        q = select(Lot).where(Lot.plat_id == p.id)
+        if lot:
+            q = q.where(Lot.key == lot)
+        lots = s.scalars(q.order_by(Lot.id)).all()
+        if lot and not lots:
+            keys = s.scalars(select(Lot.key).where(Lot.plat_id == p.id)).all()
+            c.print(f"[red]no lot[/red] {lot!r} in {p.anchor}")
+            c.print("  lots: " + (", ".join(keys) or "(none)"))
+            raise typer.Exit(1)
+        done = (LotState.DONE.value, LotState.ABORTED.value)
+        targets = [(L, live_agent(s, L)) for L in lots if L.state not in done]
+        if not targets:
+            c.print(f"[dim]{p.anchor}: nothing to abort "
+                    f"({len(lots)} lot(s), all finished)[/dim]")
+            return
+
+        for L, live in targets:
+            running = (f"[yellow]{live.provider}/{live.model} pid {live.pid}[/yellow]"
+                       if live else "[dim]no agent running[/dim]")
+            c.print(f"  {L.key} [{L.state}] {running}")
+        if not (yes or Confirm.ask(f"abort {len(targets)} lot(s) of {p.anchor}?",
+                                   default=False)):
+            c.print("[dim]left alone[/dim]")
+            return
+
+        for L, live in targets:
+            pid = live.pid if live else None
+            cmd = (live.role_binding or {}).get("cmd", "") if live else ""
+            killed = terminate(pid, expect=cmd, since=live.started_at) if live else False
+            if live:
+                # It is gone, or it refused even SIGKILL -- either way stop calling
+                # it live, and say which, because those are not the same situation.
+                still = process_alive(pid, cmd, since=live.started_at)
+                live.pid = None
+                live.finished_at = live.finished_at or datetime.now(timezone.utc)
+                if still:
+                    c.print(f"  [red]{L.key}: pid {pid} survived SIGKILL[/red]")
+            was = L.state
+            record(s, plat_id=p.id, lot_id=L.id,
+                   attempt_id=live.id if live else None,
+                   actor="human", actor_detail="cli", kind="override",
+                   decision=f"aborted {was} -> ABORTED",
+                   rationale=note or "(no reason given)",
+                   alternatives=["let the agent finish", "plat pause"],
+                   inputs={"was": was, "killed_pid": pid, "signalled": killed},
+                   apply=lambda L=L: setattr(L, "state", LotState.ABORTED.value))
+            c.print(f"[green]{L.key}[/green] {was} -> ABORTED"
+                    + (" (agent stopped)" if killed else ""))
+
+        if not lot and all(L.state in done or L.state == LotState.ABORTED.value
+                           for L in lots):
+            record(s, plat_id=p.id, actor="human", actor_detail="cli", kind="override",
+                   decision=f"plat aborted ({p.status} -> aborted)",
+                   rationale=note or "(no reason given)",
+                   alternatives=["leave it running"], inputs={"was": p.status},
+                   apply=lambda: setattr(p, "status", "aborted"))
+            c.print(f"[green]{p.anchor}[/green] aborted")
+        c.print("[dim]worktree left as it is; plat reopen puts a lot back in play[/dim]")
+
+
+@app.command()
 def sync(anchor: str = typer.Argument(None, help="default: every plat not yet closed")):
     """Refresh what the issue tracker says about these plats.
 
