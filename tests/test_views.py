@@ -62,3 +62,12 @@ def test_the_all_branch_returns_the_same_columns_as_the_view(conn):
         pytest.skip("no lots to compare")
     missing = view_cols - set(rows[0].keys())
     assert not missing, f"--all is missing {sorted(missing)} that v_live_lots has"
+
+
+def test_the_all_branch_still_excludes_standalone_reviews(conn):
+    """`plat review` creates a plat with kind='review'. --all bypassed v_live_lots
+    and leaked those onto the board as rows like review/<repo>@<branch>."""
+    from plat.cli import _live_rows
+    rows = _live_rows(None, True)
+    bad = [r["ticket"] for r in rows if str(r["ticket"]).startswith("review/")]
+    assert not bad, f"review pseudo-plats on the live board: {bad}"

@@ -80,3 +80,26 @@ async def test_top_and_status_read_the_same_query():
     import inspect
     from plat import tui
     assert "_live_rows(" in inspect.getsource(tui.PlatTop.refresh_all)
+
+
+async def test_an_unchanged_table_is_not_rebuilt():
+    """Rebuilding once a second made the panes flicker: clear() emits a highlight
+    event for a transient key, which read as a new selection and wiped the log."""
+    app = await _boot()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.refresh_all()
+        sig = app._sig
+        app.refresh_all()
+        assert app._sig is sig or app._sig == sig, "signature changed with no data change"
+
+
+async def test_highlight_events_from_a_rebuild_are_ignored():
+    app = await _boot()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.sel, app._last_log_id = 7, 123
+        app._rebuilding = True
+        app.on_data_table_row_highlighted(
+            type("E", (), {"row_key": type("K", (), {"value": "9"})()})())
+        assert app.sel == 7 and app._last_log_id == 123, "a rebuild moved the selection"

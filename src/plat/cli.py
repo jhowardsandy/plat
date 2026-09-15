@@ -380,10 +380,12 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
         if info and _tr.collides(info, d.get("title", "")) and not p.lots:
             c.print(f"\n[red]{info['key']} already exists and is {info.get('status')}[/red]"
                     f"\n  {(info.get('summary') or '')[:100]}"
-                    f"\n  [dim]If that is not this work, pick a different anchor — Plat "
-                    f"cannot tell a ticket you mean from one that happens to share a "
-                    f"key, and an anchor collision writes your branch and commits "
-                    f"against someone else's ticket.[/dim]")
+                    f"\n  [dim]If that is this work, carry on — picking up someone "
+                    f"else's ticket is fine when they are happy for you to, and "
+                    f"reassigning it is the courtesy. If it is NOT, choose another "
+                    f"anchor: Plat cannot tell a ticket you mean from one that "
+                    f"happens to share a key, and a collision puts your branch and "
+                    f"commits against someone else's work.[/dim]")
         if dry_run:
             c.print("\n[yellow]dry run[/yellow] - rows staged, nothing started. "
                     f"budget ${p.budget_usd:.2f}. Re-run with --commit, then `plat start "
@@ -531,10 +533,11 @@ def _live_rows(anchor: str | None, all_: bool):
          "  WHERE lot_id = l.id) AS cost_estimated, "
          "(SELECT coalesce(sum(permission_denials),0) FROM attempts "
          "  WHERE lot_id = l.id) AS permission_denials "
-         "FROM lots l JOIN plats p ON p.id = l.plat_id") if all_ else \
+         "FROM lots l JOIN plats p ON p.id = l.plat_id "
+         "WHERE p.kind = 'plat'") if all_ else \
         "SELECT * FROM v_live_lots"
     if anchor:
-        q += (" WHERE p.anchor = :a" if all_ else " WHERE ticket = :a")
+        q += (" AND p.anchor = :a" if all_ else " WHERE ticket = :a")
     q += " ORDER BY p.anchor, l.key" if all_ else " ORDER BY needs_human DESC, stale DESC, ticket, lot"
     with DB.engine().begin() as conn:
         return conn.execute(text(q), {"a": anchor} if anchor else {}).mappings().all()

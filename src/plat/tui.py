@@ -57,6 +57,8 @@ class PlatTop(App):
         self.show_logs = True
         self._last_log_id = 0
         self._last_event_id = 0
+        self._sig: tuple | None = None      # what the table currently shows
+        self._rebuilding = False
 
     # ---------------------------------------------------------------- layout
     def compose(self) -> ComposeResult:
@@ -118,7 +120,17 @@ class PlatTop(App):
 
     def _lots(self, rows) -> None:
         tbl = self.query_one("#lots", DataTable)
+        # Rebuilding an unchanged table once a second is what made the panes
+        # flicker: clear() emits a row-highlight for a transient key, the handler
+        # read that as a new selection and wiped the log pane, and the next tick
+        # put it back. Only rebuild when something actually changed.
+        sig = tuple((r["lot_id"], r["state"], r["phase"], r["agent"], r["attempt"],
+                     round(r["cost"], 2), r["stale"], r["needs_human"]) for r in rows)
+        if sig == self._sig:
+            return
+        self._sig = sig
         keep = tbl.cursor_row
+        self._rebuilding = True
         tbl.clear()
         for r in rows:
             sig = []
@@ -143,6 +155,7 @@ class PlatTop(App):
         if rows:
             tbl.move_cursor(row=min(keep, len(rows) - 1))
             self.sel = rows[min(keep, len(rows) - 1)]["lot_id"]
+        self._rebuilding = False
 
     def _detail(self, rows) -> None:
         if self.sel is None:
@@ -197,6 +210,8 @@ class PlatTop(App):
 
     # -------------------------------------------------------------- actions
     def on_data_table_row_highlighted(self, ev) -> None:
+        if self._rebuilding:
+            return          # a rebuild's own events are not the user selecting
         if ev.row_key and ev.row_key.value:
             new = int(ev.row_key.value)
             if new != self.sel:
