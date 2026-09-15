@@ -41,6 +41,13 @@ class Plat(Base):
     # planned | running | paused | closing | recording | signoff | closed | aborted
     budget_usd: Mapped[float] = mapped_column(Float, default=0.0)
     origin_id: Mapped[str] = mapped_column(String(64))   # per-install; keeps corpora mergeable
+    # What the ISSUE TRACKER says, cached. Plat's own lifecycle (delivered/closed)
+    # and the ticket's are different facts and neither implies the other.
+    ticket_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ticket_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ticket_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ticket_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime] = _now()
     # When PLAT finished its work and handed over. Set by the supervisor.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),

@@ -32,6 +32,8 @@ DEFAULTS = {
     # Notify YOU when a run needs you. Plat never announces to other people.
     "notify": {"enabled": True, "handlers": ["desktop"],
                "on": ["blocked", "delivered", "budget"]},
+    # How Plat asks your issue tracker what a ticket says. Empty = it does not ask.
+    "tracker": {},
 }
 
 CONFIG_TEMPLATE = '''# plat configuration -- environment variables override every value here.
@@ -70,6 +72,14 @@ on       = ["blocked", "delivered", "budget"]
 
 # [notify.exec]                        # anything else: bot token, ntfy, pager.
 # cmd = "my-notifier"                  # the event arrives on stdin as JSON
+
+# How Plat asks your issue tracker what a ticket actually says. It stays
+# tracker-agnostic: give it a command that takes {anchor} and prints
+#   {"key": "...", "status": "...", "summary": "...", "url": "..."}
+# on stdout. Without it Plat knows its own lifecycle and nothing about the ticket's
+# -- which is how an invented anchor once collided with someone else's live work.
+# [tracker]
+# cmd = "my-ticket-lookup {anchor}"
 '''
 
 
@@ -80,7 +90,8 @@ class Config:
     broker_url: str
     roles_path: Path
     origin_id: str
-    notify: dict = field(default_factory=dict)          # per-install uuid; keeps findings mergeable across installs
+    notify: dict = field(default_factory=dict)
+    tracker: dict = field(default_factory=dict)          # per-install uuid; keeps findings mergeable across installs
     stale_after_s: int = 600
     max_attempts: int = 3
 
@@ -138,6 +149,7 @@ def load() -> Config:
         roles_path=Path(os.environ.get("PLAT_ROLES", h / "roles.yaml")),
         origin_id=origin.read_text().strip(),
         notify=(f.get("notify") or DEFAULTS["notify"]),
+        tracker=(f.get("tracker") or {}),
         stale_after_s=int(pick("stale_after_s", "PLAT_STALE_AFTER_S")),
         max_attempts=int(pick("max_attempts", "PLAT_MAX_ATTEMPTS")),
     )

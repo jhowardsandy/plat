@@ -302,7 +302,12 @@ def draft(
 @app.command()
 def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
     """Load a plat.yaml, materialise worktrees, smoke the gate, seed the rows."""
+    from . import tracker as _tr
     cfg = load(); d = yaml.safe_load(spec.read_text())
+    info = _tr.lookup(cfg, d["anchor"]) if _tr.configured(cfg) else None
+    if info:
+        c.print(f"[dim]tracker:[/dim] {info['key']} [bold]{info.get('status')}[/bold] "
+                f"— {(info.get('summary') or '')[:70]}")
     with DB.session() as s:
         p = s.scalars(select(Plat).where(Plat.anchor == d["anchor"])).first()
         if p is None:
@@ -316,6 +321,8 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
                                                      Criterion.ac_id == ac["id"])).first():
                 s.add(Criterion(plat_id=p.id, ac_id=ac["id"], statement=ac["statement"],
                                 verify_cmd=ac.get("verify"), lot_key=ac.get("lot")))
+        if info and _tr.collides(info, d.get("title", "")) and p.id is None:
+            pass      # unreachable; p is flushed above. kept for clarity of intent
         for L in d["lots"]:
             lot = s.scalars(select(Lot).where(Lot.plat_id == p.id,
                                               Lot.key == L["key"])).first()
@@ -369,6 +376,14 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
                 s.add(lot)
             else:
                 lot.worktree_path, lot.base_ref, lot.config = str(wt), sha, cfgd
+        _tr.record(s, p, info)
+        if info and _tr.collides(info, d.get("title", "")) and not p.lots:
+            c.print(f"\n[red]{info['key']} already exists and is {info.get('status')}[/red]"
+                    f"\n  {(info.get('summary') or '')[:100]}"
+                    f"\n  [dim]If that is not this work, pick a different anchor — Plat "
+                    f"cannot tell a ticket you mean from one that happens to share a "
+                    f"key, and an anchor collision writes your branch and commits "
+                    f"against someone else's ticket.[/dim]")
         if dry_run:
             c.print("\n[yellow]dry run[/yellow] - rows staged, nothing started. "
                     f"budget ${p.budget_usd:.2f}. Re-run with --commit, then `plat start "
@@ -418,6 +433,34 @@ def pause(anchor: str = typer.Argument(None), resume: bool = typer.Option(False,
                inputs={"was": was},
                apply=lambda: setattr(p, "status", new))
         c.print(f"[green]{p.anchor}[/green] {was} -> {new}")
+
+
+@app.command()
+def sync(anchor: str = typer.Argument(None, help="default: every plat not yet closed")):
+    """Refresh what the issue tracker says about these plats.
+
+    Plat's lifecycle and the ticket's are different facts and neither implies the
+    other: a delivered plat whose ticket still reads In Progress is exactly the
+    gap worth seeing.
+    """
+    from . import tracker as _tr
+    cfg = load()
+    if not _tr.configured(cfg):
+        c.print("[yellow]no tracker configured[/yellow] — add [tracker] cmd to "
+                f"{Path.home() / '.plat' / 'config.toml'}")
+        raise typer.Exit(1)
+    with DB.session() as s:
+        q = select(Plat).where(Plat.kind == "plat")
+        q = q.where(Plat.anchor == anchor) if anchor else q.where(Plat.closed_at.is_(None))
+        for p in s.scalars(q).all():
+            info = _tr.lookup(cfg, p.anchor)
+            _tr.record(s, p, info)
+            if info:
+                c.print(f"  {p.anchor:<14} plat=[cyan]{p.status}[/cyan]  "
+                        f"ticket=[bold]{info.get('status')}[/bold]")
+            else:
+                c.print(f"  {p.anchor:<14} plat=[cyan]{p.status}[/cyan]  "
+                        f"[dim]ticket unknown[/dim]")
 
 
 @app.command()
@@ -687,7 +730,8 @@ def history(limit: int = 25,
     from sqlalchemy import text
     with DB.engine().begin() as conn:
         rows = conn.execute(text(
-            "SELECT * FROM v_delivered_plats "
+            "SELECT d.*, p.ticket_status FROM v_delivered_plats d "
+            "JOIN plats p ON p.anchor = d.anchor "
             + ("WHERE awaiting_you " if awaiting else "")
             + "ORDER BY delivered DESC NULLS LAST LIMIT :n"),
             {"n": limit}).mappings().all()
@@ -717,7 +761,8 @@ def history(limit: int = 25,
     # (**ANCHOR** +N) and truncate the title here rather than fighting the layout.
     t = Table(box=None, header_style="dim")
     for col, j in (("ticket", "left"), ("title", "left"), ("delivered", "left"),
-                   ("status", "left"), ("lots", "right"), ("att", "right"),
+                   ("plat", "left"), ("ticket state", "left"),
+                   ("lots", "right"), ("att", "right"),
                    ("find", "right"), ("spend", "right"), ("flag", "left")):
         t.add_column(col, justify=j, no_wrap=True)
     for r in rows:
@@ -727,8 +772,12 @@ def history(limit: int = 25,
             title = title[:43] + "…"
         status = (f"[yellow]awaiting you[/yellow]" if r["awaiting_you"]
                   else f"[green]{r['status']}[/green]")
+        tk = r["ticket_status"] or "—"
+        # a delivered plat whose ticket still reads open is the drift worth seeing
+        tk_col = ("yellow" if r["awaiting_you"] and tk not in ("—",) else "dim")
         t.add_row(f"[green]{r['anchor']}[/green]" + (f" [dim]+{n}[/dim]" if n else ""),
                   title, str(r["delivered"] or "—"), status,
+                  f"[{tk_col}]{tk}[/{tk_col}]",
                   str(r["lots"]), str(r["attempts"]), str(r["findings"]),
                   f"${r['spend']:.2f}",
                   "[red]⚠ roster gap[/red]" if r["roster_gap"] else "[dim]·[/dim]")
