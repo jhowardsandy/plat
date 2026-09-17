@@ -84,6 +84,71 @@ def live_agent(db, lot) -> Attempt | None:
     return None
 
 
+def deps_pending(db, plat, lot) -> tuple[tuple[str, str], ...]:
+    """Upstream lots of this one that have not reached DONE.
+
+    `deps_met` was hardcoded True: the FSM had the branch, the docs described the
+    guarantee, and nothing computed it. An edge bought ordering only because
+    `plat start` happened to iterate in insertion order, which is not an ordering
+    guarantee, it is a coincidence.
+    """
+    keys = list(lot.depends_on or [])
+    if not keys:
+        return ()
+    rows = db.execute(
+        select(Lot.key, Lot.state).where(Lot.plat_id == plat.id, Lot.key.in_(keys))
+    ).all()
+    found = {k: s for k, s in rows}
+    out = [(k, found.get(k, "MISSING")) for k in keys
+           if found.get(k) != LotState.DONE.value]
+    return tuple(out)
+
+
+def upstream_handoff(db, plat, lot) -> list[dict]:
+    """What each upstream lot reported building, from its own code verdict.
+
+    The latest code attempt wins: if a lot went round twice, the second pass is
+    what is actually in the tree.
+    """
+    out: list[dict] = []
+    for key in list(lot.depends_on or []):
+        up = db.scalars(
+            select(Lot).where(Lot.plat_id == plat.id, Lot.key == key)).first()
+        if up is None:
+            continue
+        v = db.scalars(
+            select(Verdict).join(Attempt, Attempt.id == Verdict.attempt_id)
+            .where(Attempt.lot_id == up.id, Attempt.phase == "code")
+            .order_by(Attempt.id.desc())).first()
+        for h in ((v.raw if v else None) or {}).get("handoff") or []:
+            if isinstance(h, dict) and h.get("name"):
+                out.append({"lot": up.key, "repo": up.repo, **h})
+    return out
+
+
+def ordered_lots(lots) -> list:
+    """Dependencies before dependents, insertion order otherwise.
+
+    Kahn, with one rule that matters more than the sort: a lot in a cycle is
+    appended rather than dropped. `plat draft` rejects cycles, but a hand-edited
+    spec can still carry one, and a lot that silently disappears from a run is
+    worse than a lot that waits and says why.
+    """
+    lots = list(lots)
+    keys = {l.key for l in lots}
+    pend = {l.key: {d for d in (l.depends_on or []) if d in keys} for l in lots}
+    out, placed = [], set()
+    while True:
+        ready = [l for l in lots
+                 if l.key not in placed and not (pend[l.key] - placed)]
+        if not ready:
+            break
+        for l in ready:
+            out.append(l); placed.add(l.key)
+    out += [l for l in lots if l.key not in placed]     # cycles, never dropped
+    return out
+
+
 def build_ctx(db, plat, lot) -> fsm.Ctx:
     cfg_l = lot.config or {}
     gate_a = _latest(db, lot, phases=["gate"])
@@ -91,9 +156,11 @@ def build_ctx(db, plat, lot) -> fsm.Ctx:
     prev = db.scalars(
         select(Finding).join(Attempt).where(
             Attempt.lot_id == lot.id, Attempt.n < lot.attempt)).all()
+    pending = deps_pending(db, plat, lot)
     return fsm.Ctx(
-        deps_met=True,
-        phases=frozenset((lot.config or {}).get("phases") or ["code", "review"]),                      # v0: one lot, no DAG
+        deps_met=not pending,
+        deps_pending=pending,
+        phases=frozenset((lot.config or {}).get("phases") or ["code", "review"]),
         verdict=_verdict_of(db, agent_a),
         gate=_verdict_of(db, gate_a),
         prev_fingerprints=frozenset(f.fingerprint for f in prev),
@@ -315,7 +382,8 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
                 Attempt.lot_id == lot.id, Attempt.n == lot.attempt - 1)).all()
         prompt = P.build_code(lot, plat, wt, cfgl.get("branch", ""), lot.base_ref or "HEAD",
                               cfgl.get("plat_map", ""), cfgl.get("plan", ""), crit,
-                              findings, cfgl.get("gate", {}).get("test", "true"), out)
+                              findings, cfgl.get("gate", {}).get("test", "true"), out,
+                              upstream=upstream_handoff(db, plat, lot))
         if cfgl.get("mode") == "converge":
             prompt = prompt.replace(
                 "## Rules",
@@ -328,7 +396,8 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
         gate_a = _latest(db, lot, phases=["gate"])
         prompt = P.build_review(lot, plat, wt, lot.base_ref or "HEAD",
                                 cfgl.get("plan", ""), crit,
-                                _verdict_of(db, gate_a) or {}, out)
+                                _verdict_of(db, gate_a) or {}, out,
+                                upstream=upstream_handoff(db, plat, lot))
     pf = out / "prompt.md"
     pf.write_text(prompt)
 
@@ -425,6 +494,18 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
             title="termination contract not honoured",
             detail=str(e)[:300]), cfg.notify)
         raise Halt(str(e))
+
+    if nxt.phase == "code" and not verdict.get("handoff"):
+        # Not an error -- plenty of lots have nothing to hand over. But a lot with
+        # dependents and an empty handoff means the next agent is about to guess
+        # at a contract that exists, and that is worth one line now rather than a
+        # contradiction discovered two attempts later.
+        dependents = db.scalars(
+            select(Lot.key).where(Lot.plat_id == plat.id,
+                                  Lot.depends_on.any(lot.key))).all()
+        if dependents:
+            log(f"    !! no handoff reported, but {', '.join(dependents)} "
+                f"depend(s) on this lot")
 
     last = ingest.persist(db, plat=plat, lot=lot, attempt=a, verdict=verdict,
                           result=res, out_dir=out, parent_decision_id=parent)

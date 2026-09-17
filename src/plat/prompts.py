@@ -22,6 +22,11 @@ CODE_SHAPE = """{
     {"id": "AC1", "met": true, "evidence": "tests/test_x.py::test_y"}
   ],
   "contracts_touched": ["kafka:some.topic"],
+  "handoff": [
+    {"kind": "endpoint | env | topic | type | config | command | other",
+     "name": "GET /api/health/ping",
+     "detail": "returns {\"version\": \"<semver>\"}; 200 always, never 404"}
+  ],
   "decisions": [
     {"choice": "...", "alternatives": ["..."], "rationale": "...", "reversible": true}
   ],
@@ -106,8 +111,37 @@ def prior_art_block(rows=None) -> str:
     return "\n".join(out)
 
 
+def handoff_block(rows) -> str:
+    """What the lots you depend on actually built.
+
+    `depends_on` used to buy ordering and nothing else: lot B got its own
+    description plus the plat map AS WRITTEN BEFORE A RAN, so if A settled an API
+    shape, B could not know it and re-derived one. These rows are A's own report,
+    read out of its code verdict.
+    """
+    if not rows:
+        return ""
+    by_lot: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        by_lot.setdefault((r["lot"], r.get("repo", "")), []).append(r)
+    out = ["## What the lots you depend on actually built", "",
+           "Reported by the agent that finished each lot, after its work passed "
+           "the gate. This is the integration contract as BUILT, not as planned.", ""]
+    for (key, repo), items in by_lot.items():
+        out.append(f"### `{key}`" + (f" — {repo}" if repo else ""))
+        for i in items:
+            out.append(f"- **{i['kind']}** `{i['name']}` — {i['detail']}")
+        out.append("")
+    out += ["Build against these, not against what the plat map predicted. If one "
+            "contradicts your lot description, the description was written before "
+            "that lot ran: say so in `open_questions` rather than picking which "
+            "one you like. Resolving a contract conflict silently is the one "
+            "failure nobody downstream can see.", ""]
+    return "\n".join(out)
+
+
 def build_code(lot, plat, wt, branch, base, plat_map, lot_desc, criteria,
-               findings, test_cmd, out_dir) -> str:
+               findings, test_cmd, out_dir, upstream=None) -> str:
     return (_t("code.md")
             .replace("{anchor}", plat.anchor).replace("{lot_key}", lot.key)
             .replace("{repo}", lot.repo).replace("{worktree}", str(wt))
@@ -116,12 +150,13 @@ def build_code(lot, plat, wt, branch, base, plat_map, lot_desc, criteria,
             .replace("{lot_desc}", lot_desc or "_not supplied_")
             .replace("{criteria}", criteria_block(criteria))
             .replace("{feedback}", feedback_block(findings, lot.attempt))
+            .replace("{upstream}", handoff_block(upstream))
             .replace("{test_cmd}", test_cmd)
             .replace("{termination}", termination(out_dir, "code")))
 
 
 def build_review(lot, plat, wt, base, lot_desc, criteria, gate, out_dir,
-                 prior=None) -> str:
+                 prior=None, upstream=None) -> str:
     g = (f"- command: `{gate['cmd']}`\n"
          f"- exit code: {gate['exit_code']}\n"
          f"- passed: {gate['tests_passed']}, failed: {gate['tests_failed']}\n"
@@ -133,6 +168,7 @@ def build_review(lot, plat, wt, base, lot_desc, criteria, gate, out_dir,
             .replace("{criteria}", criteria_block(criteria))
             .replace("{gate}", g)
             .replace("{prior_art}", prior_art_block(prior))
+            .replace("{upstream}", handoff_block(upstream))
             .replace("{termination}", termination(out_dir, "review")))
 
 

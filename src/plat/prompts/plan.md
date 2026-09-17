@@ -83,6 +83,8 @@ lots:
   - key: <short name, usually the repo>
     repo: <path/as/given/above>
     depends_on: []          # other lot keys, only where B genuinely needs A's output
+                            # B is given A's reported handoff (endpoints, env, topics),
+                            # so an edge now buys content, not just ordering
     # mode: converge        # only for chip-away work
     # objective: ">= 80"
     gate:

@@ -71,11 +71,14 @@ def test_the_readme_does_not_claim_parallelism_it_does_not_have():
         "the README must say lots are serial somewhere a reader will find it"
 
 
-def test_depends_on_is_documented_with_its_limitation():
+def test_depends_on_is_documented_with_what_it_actually_buys():
     """It appears in example.plat.yaml and the planner prompt, and was explained
-    in none of the three documents."""
+    in none of the three documents. Later it was documented as ordering-only --
+    true at the time, and wrong once handoff shipped. Docs that describe an older
+    version of the behaviour are worse than silence, because they are believed."""
     from pathlib import Path
     root = Path(__file__).parent.parent
     guide = (root / "docs" / "GUIDE.md").read_text()
     assert "depends_on" in guide
-    assert "does not pass" in guide or "does not hand" in guide
+    assert "handoff" in guide, "the content half of an edge is undocumented"
+    assert "does not pass anything" not in guide, "this stopped being true"
