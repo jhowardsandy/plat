@@ -29,6 +29,7 @@ tests do not catch: correctness under inputs the tests do not cover, contract
 drift against other repos, silent failure modes, and criteria claimed as met on
 thin evidence.
 
+{upstream}
 {prior_art}
 
 ## Verdicts

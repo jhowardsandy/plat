@@ -102,6 +102,10 @@ ALL_PHASES = frozenset({"code", "review", "docs", "quality"})
 class Ctx:
     """Everything decide() is allowed to look at. Assembled by the caller."""
     deps_met: bool
+    # Which upstream lots are not DONE yet, and what state they are in. Carried so
+    # the wait reason can name them: "waiting on api" is actionable, "dependencies
+    # not satisfied" sends you to the database to find out what it meant.
+    deps_pending: tuple[tuple[str, str], ...] = ()
     mode: Mode = Mode.ATTEMPT
     objective: str | None = None
     progress: tuple[float, ...] = ()        # one reading per completed gate
@@ -170,6 +174,23 @@ def is_stale(heartbeat_at: datetime | None, now: datetime) -> bool:
 
 # ---------------------------------------------------------------- the machine
 
+def _waiting_on(ctx: Ctx) -> str:
+    """Why this lot cannot start yet, in the words a person needs.
+
+    A dep that is BLOCKED or ABORTED will never satisfy itself, so it is called
+    out differently: that lot is not waiting, it is stuck behind something.
+    """
+    if not ctx.deps_pending:
+        return "dependencies not satisfied"
+    stuck = [k for k, s in ctx.deps_pending
+             if s in (LotState.BLOCKED.value, LotState.ABORTED.value)]
+    named = ", ".join(f"{k} [{s}]" for k, s in ctx.deps_pending)
+    if stuck:
+        return (f"waiting on {named} — {', '.join(stuck)} will not finish without "
+                f"you (plat reopen, or drop the edge)")
+    return f"waiting on {named}"
+
+
 def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
     if ctx.paused:
         return Next("noop", reason="plat paused")
@@ -181,7 +202,7 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
     match state:
         case LotState.PENDING:
             if not ctx.deps_met:
-                return Next("wait", reason="dependencies not satisfied")
+                return Next("wait", reason=_waiting_on(ctx))
             return _code(1, resume=False, why="dependencies satisfied")
 
         case LotState.CODING:
@@ -256,7 +277,7 @@ def _converge(state: LotState, n: int, ctx: Ctx) -> Next:
     match state:
         case LotState.PENDING:
             if not ctx.deps_met:
-                return Next("wait", reason="dependencies not satisfied")
+                return Next("wait", reason=_waiting_on(ctx))
             return _code(1, resume=False, why="converge: first pass")
 
         case LotState.CODING:

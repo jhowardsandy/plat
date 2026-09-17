@@ -62,6 +62,29 @@ def prior_context(db, limit: int = 10) -> str:
 REQUIRED_LOT = ("key", "repo", "gate")
 
 
+def _cycles(lots: list[dict]) -> list[list[str]]:
+    """Dependency cycles, as the loop you have to break.
+
+    Now that `depends_on` actually gates a lot, a cycle is a deadlock rather than
+    a curiosity: every lot in it waits forever on another member.
+    """
+    edges = {l.get("key"): [d for d in (l.get("depends_on") or [])] for l in lots}
+    found, seen = [], set()
+    def walk(key, trail):
+        if key in trail:
+            loop = trail[trail.index(key):] + [key]
+            if tuple(sorted(set(loop))) not in seen:
+                seen.add(tuple(sorted(set(loop))))
+                found.append(loop)
+            return
+        for nxt in edges.get(key) or []:
+            if nxt in edges:
+                walk(nxt, trail + [key])
+    for k in edges:
+        walk(k, [])
+    return found
+
+
 def validate(spec: dict, root: Path) -> list[str]:
     """Check the draft against what `plat plan` will actually require.
 
@@ -77,6 +100,9 @@ def validate(spec: dict, root: Path) -> list[str]:
     if not lots:
         errs.append("no lots, and needs_human is not set — say which it is")
     keys = {l.get("key") for l in lots}
+    for loop in _cycles(lots):
+        errs.append("dependency cycle: " + " -> ".join(loop)
+                    + " — every lot in it would wait on another forever")
     for i, l in enumerate(lots):
         where = f"lots[{i}] ({l.get('key', '?')})"
         for k in REQUIRED_LOT:
@@ -93,6 +119,8 @@ def validate(spec: dict, root: Path) -> list[str]:
         for dep in l.get("depends_on") or []:
             if dep not in keys:
                 errs.append(f"{where}: depends_on {dep!r} is not a lot in this plat")
+            if dep == l.get("key"):
+                errs.append(f"{where}: depends_on itself")
         if l.get("mode") == "converge":
             if not l.get("objective"):
                 errs.append(f"{where}: converge needs an objective")

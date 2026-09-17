@@ -242,7 +242,7 @@ already been found in that repo, and whether it stuck. A finding *dismissed* wit
 reason is the most valuable row there — it is what stops a reviewer re-raising a
 settled point.
 
-### Dependencies between lots, and what they do not do
+### Dependencies between lots
 
 ```yaml
 lots:
@@ -250,25 +250,53 @@ lots:
     repo: services/api
   - key: manifests
     repo: infra/manifests
-    depends_on: [api]        # runs after `api` reaches DONE
+    depends_on: [api]        # runs after `api` reaches DONE, and is given what it built
 ```
 
-`depends_on` is an **ordering** constraint and nothing more. It gates the second
-lot on the first reaching `DONE` — it does not pass anything from A to B. Lot B's
-context is its own lot description plus the plat map **as written before A ran**,
-so if B needs to know what A actually built, it will not.
+An edge buys two things.
 
-Two ways to live with that until content handoff exists:
+**Ordering.** The dependent lot will not start until every lot it names reaches
+`DONE`. `plat start` dispatches in dependency order, and the gate is re-checked
+from the database each time, so an edge holds across sessions rather than only
+within one run. A lot waiting on something that cannot finish says so by name:
 
-- **Write the contract into the plat map** rather than leaving it to be discovered.
-  "The endpoint will be `GET /api/health/ping` and will return a `version` field"
-  is something both lots can read up front.
-- **Give B a gate that fails without A's half.** A test that exercises the seam is
-  worth more than a dependency edge, because it is checked rather than assumed.
+```
+  [PENDING a0] -> wait: waiting on api [BLOCKED] — api will not finish without you
+                        (plat reopen, or drop the edge)
+```
 
-Be sparse with edges either way. A false dependency serialises work for no reason,
-and today lots are serial regardless — an edge only buys you ordering you can rely
-on, not speed.
+**Content.** When a lot finishes its code phase it reports a `handoff[]` — the
+facts a consumer needs and could not guess:
+
+```json
+"handoff": [
+  {"kind": "endpoint", "name": "GET /api/health/ping",
+   "detail": "returns {\"version\": \"<semver>\"}; 200 always, never 404"},
+  {"kind": "env", "name": "PING_ENABLED", "detail": "must be true or the route 404s"}
+]
+```
+
+Every lot that depends on it is handed those entries — in the coder's prompt, and
+in the reviewer's, since `review.md` asks for contract drift and previously had
+nothing to check it against. `kind` is one of `endpoint`, `env`, `topic`, `type`,
+`config`, `command`, `other`. The latest code attempt wins: if a lot went round
+twice, the second pass is what is actually in the tree.
+
+The prompt is explicit that a dependent must **not** silently resolve a
+contradiction. If the handoff disagrees with the lot description — which happens
+whenever the plan was written before the upstream lot ran — the dependent says so
+in `open_questions` instead of picking one. A quietly-resolved contract conflict is
+the one failure downstream cannot see.
+
+A lot that finishes with an empty `handoff[]` while something depends on it gets a
+line in the run log. That is not an error: plenty of lots have nothing to hand
+over. It is there because the alternative is a feature that goes unused for weeks
+and looks like it is working.
+
+Be sparse with edges even so. A false dependency serialises work for no reason,
+and lots are serial today regardless — an edge buys ordering you can rely on and
+a contract that crosses, not speed. A test that exercises the seam is still worth
+more than an edge, because it is checked rather than assumed.
 
 ## 6. Gates
 

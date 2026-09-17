@@ -669,7 +669,9 @@ def start(anchor: str):
     with DB.session() as s:
         p = _resolve(s, anchor)
         p.status = "running"
-        for lot in s.scalars(select(Lot).where(Lot.plat_id == p.id)).all():
+        lots = runner.ordered_lots(
+            s.scalars(select(Lot).where(Lot.plat_id == p.id)).all())
+        for lot in lots:
             if lot.state in (LotState.DONE.value, LotState.ABORTED.value):
                 continue
             c.print(f"\n[bold cyan]{p.anchor}/{lot.key}[/bold cyan]")
