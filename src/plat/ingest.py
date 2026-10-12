@@ -25,7 +25,7 @@ class ContractError(RuntimeError):
 
 
 def _validator(phase: str) -> Draft202012Validator:
-    name = {"code": "code", "review": "review", "quality": "review",
+    name = {"code": "code", "review": "review", "quality": "quality",
             "scout": "scout"}.get(phase, phase)
     return Draft202012Validator(json.loads((SCHEMAS / f"{name}.schema.json").read_text()))
 
@@ -61,18 +61,18 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
     # only ever say "someone once complained about X", never whether the complaint
     # survived -- which is most of its value as prior art (design doc §12), and
     # what separates a resolved finding from one dismissed on purpose.
-    if attempt.phase in ("review", "quality") and verdict.get("verdict") == "pass":
+    if attempt.phase in ("review", "quality", "docs") and verdict.get("verdict") == "pass":
         still = {f["fingerprint"] for f in verdict.get("findings", [])}
         prior = db.scalars(
             select(Finding).join(Attempt, Attempt.id == Finding.attempt_id)
             .where(Attempt.lot_id == lot.id,
-                   Attempt.n < attempt.n,
+                   Attempt.n < attempt.n, Attempt.phase == attempt.phase,
                    Finding.resolved_in_attempt_id.is_(None))).all()
         for f in prior:
             if f.fingerprint not in still:
                 f.resolved_in_attempt_id = attempt.id
 
-    for f in (verdict.get("findings", []) if attempt.phase in ("review", "quality") else []):
+    for f in (verdict.get("findings", []) if attempt.phase in ("review", "quality", "docs") else []):
         db.add(Finding(
             attempt_id=attempt.id, origin_id=plat.origin_id, anchor=plat.anchor,
             repo=lot.repo, fingerprint=f["fingerprint"], severity=f["severity"],
@@ -95,7 +95,7 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
             inputs={"phase": attempt.phase, "attempt": attempt.n},
             reversible=d.get("reversible", True),
         ).id
-    if attempt.phase in ("review", "quality"):
+    if attempt.phase in ("review", "quality", "docs"):
         label = verdict["verdict"]
         n = len(verdict.get("findings", []))
         last = record(

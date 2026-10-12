@@ -142,7 +142,7 @@ def gate_passed(gate: dict[str, Any] | None) -> bool:
         return False
     rc = gate.get("exit_code")
     ok = (rc == 0) if rc is not None else (gate.get("tests_failed", 1) == 0)
-    return (ok and gate.get("diff_files", 0) > 0
+    return (ok and (gate.get("diff_required", True) is False or gate.get("diff_files", 0) > 0)
             and all(c.get("met") is True for c in gate.get("criteria_check", [])))
 
 
@@ -248,13 +248,8 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
             return _retry(attempt, ctx, why="changes_requested",
                           extra={"findings": len(fingerprints(v))})
 
-        case LotState.DOCS:
-            return _after("docs", ctx.phases, attempt, "docs complete", {})
-
-        case LotState.QUALITY:
-            if ctx.verdict and ctx.verdict.get("verdict") == "pass":
-                return Next("close", LotState.DONE, reason="lot complete")
-            return _retry(attempt, ctx, why="quality review requested changes")
+        case LotState.DOCS | LotState.QUALITY:
+            return _extra_phase(state, attempt, ctx)
 
         case LotState.DONE | LotState.ABORTED:
             return Next("noop", reason="terminal")
@@ -350,7 +345,7 @@ def _converge(state: LotState, n: int, ctx: Ctx) -> Next:
             return _retry(n, ctx, why="review requested changes")
 
         case LotState.DOCS | LotState.QUALITY:
-            return _after(state.value.lower(), ctx.phases, n, "phase complete", {})
+            return _extra_phase(state, n, ctx)
 
     return Next("noop", reason="terminal")
 
@@ -371,3 +366,12 @@ def _retry(attempt: int, ctx: Ctx, why: str, extra: dict | None = None) -> Next:
     # resume the coder's own session on attempt 2 -- it keeps the context for WHY
     # it made those choices. By attempt 3 that context is a liability: start cold.
     return _code(nxt, resume=(nxt - ctx.attempt_start == 2), why=why, extra=extra)
+
+
+def _extra_phase(state, attempt, ctx):
+    v = ctx.verdict or {}
+    if v.get("verdict") == "blocked":
+        return Next("human", LotState.BLOCKED, reason=f"{state.value.lower()} blocked", inputs={"verdict": v})
+    if advance(v, ctx.gate, ctx.expected_criteria):
+        return _after(state.value.lower(), ctx.phases, attempt, f"{state.value.lower()} passed", {})
+    return _retry(attempt, ctx, why=f"{state.value.lower()} requested changes")

@@ -91,3 +91,21 @@ plat ui        # Plat Room on :3033 — live lots, decision record, event tail
 - Never re-run a lot to get a different answer without recording why.
 - Never report a lot as done when the gate failed.
 - Never transition a Jira ticket or post to Slack as part of a run — those are separate, deliberate acts.
+
+## Full lifecycle and team work
+
+Check `plat workflow status <TICKET>` as well as the lot board. When a full lifecycle
+is enabled, accepted context, definition and specification are prerequisites for
+`start`; local delivery alone is not readiness. After development, follow the
+versioned `workflow integrate`, `accept recording`, `deploy`, and `accept validation`
+steps in `docs/WORKFLOW.md`. Record only evidence that was actually observed.
+Deployment requires the user's chosen target and authorization to execute its
+concrete deploy/smoke/rollback commands. Respect authorization already given in the
+conversation; do not add an extra permission loop.
+
+`plat sessions` lists or explicitly attaches Claude and Codex sessions. An attached
+interactive writer must be stopped and reconciled before automated execution.
+`plat team` provides the shared board, assignments, review requests and questions.
+For an expired execution claim, reconcile on the owner installation before reopen.
+Never inspect or signal a PID belonging to another host. External messages and
+production deployment remain separate actions.

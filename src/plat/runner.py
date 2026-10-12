@@ -77,6 +77,9 @@ def live_agent(db, lot) -> Attempt | None:
         .order_by(Attempt.id.desc())).first()
     if a is None:
         return None
+    from .ownership import host_id
+    if a.host_id and a.host_id != host_id():
+        return a  # a remote PID is opaque, never inspect or clear it locally
     if base.process_alive(a.pid, (a.role_binding or {}).get("cmd", ""),
                           since=a.started_at):
         return a
@@ -204,13 +207,24 @@ def _out_dir(cfg: Config, plat, lot, phase, n) -> Path:
     return d
 
 
-def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
+def run_lot(db, cfg, plat, lot, roles_cfg, log=print):
+    from .lifecycle import require_accepted
+    from .ownership import execution
+    require_accepted(db, plat)
+    if live_agent(db, lot):
+        log("  an agent from a previous session is still running; no new claim taken")
+        return lot.state
+    with execution(db, cfg, plat, lot):
+        return _run_lot(db, cfg, plat, lot, roles_cfg, log)
+
+
+def _run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
             log=print) -> str:
     parent = None
     from .spec import IMPLEMENTED_PHASES
     phases = (lot.config or {}).get("phases", ["code", "review"])
     if "code" not in phases or set(phases) - IMPLEMENTED_PHASES:
-        raise Halt("unsupported phases; only code and review are implemented")
+        raise Halt("unsupported phases; use code, review, docs, and quality")
     live = live_agent(db, lot)
     if live is not None:
         started = live.started_at
@@ -291,7 +305,8 @@ def reopen_lot(db, plat, lot, note: str):
         raise ValueError("shipped work is immutable; use a new plat")
     if lot.state not in ("BLOCKED", "ABORTED", "DONE"):
         raise ValueError(f"{lot.key} is {lot.state}; only stopped or completed work can be reopened")
-    lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id)).all()
+    lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id).order_by(Lot.id)
+                      .with_for_update().execution_options(populate_existing=True)).all()
     affected = {lot.key}
     while True:
         more = {l.key for l in lots if affected.intersection(l.depends_on or [])}
@@ -300,6 +315,10 @@ def reopen_lot(db, plat, lot, note: str):
         affected |= more
     targets = [l for l in lots if l.key in affected]
     for target in targets:
+        from .models import ExecutionClaim
+        claim = db.get(ExecutionClaim, target.id)
+        if claim and claim.active:
+            raise ValueError(f"{target.key} has an active execution claim; reconcile it first")
         if target.state not in ("BLOCKED", "ABORTED", "DONE", "PENDING") or live_agent(db, target):
             raise ValueError(f"{target.key} may still be executing; stop it before reopening its dependency")
     for target in targets:
@@ -313,10 +332,15 @@ def reopen_lot(db, plat, lot, note: str):
             for criterion in lot_criteria(db, plat, target):
                 criterion.met_in_attempt_id = None
             target.state = "PENDING"
-            target.human_note = note
+            target.human_note = (target.human_note + "\n\nReopen: " + note) if target.human_note else note
             target.config = {**(target.config or {}), "attempt_start": target.attempt}
             plat.status = "planned"
             plat.delivered_at = None
+            from .models import Workflow
+            workflow = db.get(Workflow, plat.id)
+            if workflow:
+                workflow.stage = "development"
+                workflow.version += 1
         record(db, plat_id=plat.id, lot_id=target.id, actor="human", actor_detail="reopen",
                kind="override", decision=f"reopened {was} -> PENDING",
                rationale=note, inputs={"was": was, "upstream": lot.key},
@@ -332,6 +356,8 @@ def _ask(db, lot) -> str | None:
 
 def maybe_deliver_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
     """Only fully completed, independently verified work can be delivered."""
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
     lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id)).all()
     if not lots or plat.status in ("closed", "aborted", "paused"):
         return False
@@ -357,7 +383,19 @@ def maybe_deliver_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
             checks.append({"id": criterion.ac_id, "met": False,
                            "error": "run criterion needs verify and a valid verify_in worktree"})
         else:
-            checks.extend(gates.verify(Path(target.worktree_path), [criterion]))
+            from .config import load
+            from .lifecycle import execute_command
+            from .ownership import OwnershipError, execution
+            try:
+                with execution(db, cfg or load(), plat, target):
+                    with _Heartbeat(target.id):
+                        rc, output = execute_command(db, cfg or load(), plat, target,
+                                                     "run_check", criterion.verify_cmd)
+                    checks.append({"id": criterion.ac_id, "cmd": criterion.verify_cmd,
+                                   "met": rc == 0, "exit_code": rc, "output_tail": output[-1500:]})
+            except OwnershipError as exc:
+                log(f"  run criterion {criterion.ac_id} waits for its owning executor: {exc}")
+                return False
     failed = any(c["met"] is not True for c in checks)
     def finish():
         if failed:
@@ -386,6 +424,10 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     cmd = gcfg.get("test", "true")
     a = Attempt(lot_id=lot.id, phase="gate", n=lot.attempt,
                 provider="supervisor", model="local", role_binding={})
+    from .ownership import current, host_id
+    claim = current.get()
+    a.host_id, a.executor_id = host_id(), cfg.origin_id
+    a.claim_generation = claim[2] if claim else None
     d = record(db, plat_id=plat.id, lot_id=lot.id, parent_id=parent,
                actor="system", actor_detail="gates.start", kind="transition",
                decision="verifying independently", inputs={"cmd": cmd},
@@ -408,7 +450,8 @@ def _run_gate(db, cfg, plat, lot, parent, log) -> int:
     a.exit_code = g.exit_code
     a.finished_at = datetime.now(timezone.utc)
     a.pid = None             # finished: nothing to find alive, nothing to abort
-    evidence = {**g.as_dict(), "criteria_check": checks}
+    evidence = {**g.as_dict(), "criteria_check": checks,
+                "diff_required": (lot.config or {}).get("kind") != "investigation"}
     db.add(Verdict(attempt_id=a.id, raw=evidence,
                    tests_passed=g.tests_passed, tests_failed=g.tests_failed))
     ok = fsm.gate_passed(evidence)
@@ -437,6 +480,8 @@ class _Heartbeat:
     """
 
     def __init__(self, lot_id: int, every: float = 15.0):
+        from .ownership import current
+        self.claim = current.get()
         self.lot_id, self.every = lot_id, every
         self._stop = threading.Event()
         self._t: threading.Thread | None = None
@@ -446,8 +491,15 @@ class _Heartbeat:
         while not self._stop.wait(self.every):
             try:
                 with _s() as s2:
+                    if self.claim:
+                        from .ownership import renew
+                        renew(s2, self.claim)
                     s2.execute(update(Lot).where(Lot.id == self.lot_id)
                                .values(heartbeat_at=datetime.now(timezone.utc)))
+                    from .models import TrackedSession
+                    s2.execute(update(TrackedSession).where(TrackedSession.lot_id == self.lot_id,
+                               TrackedSession.source == 'launched', TrackedSession.state == 'active')
+                               .values(last_activity=datetime.now(timezone.utc)))
             except Exception:
                 pass          # a missed beat must never take down the lot
 
@@ -479,21 +531,31 @@ def _worktree_fingerprint(wt: Path) -> str:
     return digest.hexdigest()
 
 
-def _prior_session(db, lot, provider: str) -> str | None:
+def _prior_session(db, lot, provider: str, cfg=None) -> str | None:
     a = db.scalars(select(Attempt).where(Attempt.lot_id == lot.id,
                                          Attempt.phase == "code")
                    .order_by(Attempt.id.desc())).first()
     if not a or a.provider != provider:
         return None
+    if cfg is not None:
+        from .ownership import host_id
+        if a.executor_id != cfg.origin_id or a.host_id != host_id():
+            return None
     s = db.scalars(select(SessionRow).where(SessionRow.attempt_id == a.id,
                                            SessionRow.provider == provider)).first()
     return s.provider_session_id if s else None
 
 
 def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) -> int:
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
+    db.refresh(lot)
+    if plat.status in ("paused", "aborted", "closed") or lot.state == "ABORTED":
+        raise Halt("execution was paused or stopped before dispatch")
     role_attempt = (nxt.attempt or 1) - int((lot.config or {}).get("attempt_start", 0))
     role = R.bind(roles_cfg, nxt.role, role_attempt)
-    sid = _prior_session(db, lot, role.provider) if nxt.resume_session else None
+    sid = _prior_session(db, lot, role.provider, cfg) if nxt.resume_session else None
     role = R.bind(roles_cfg, nxt.role, role_attempt, session_id=sid)
     lot_attempt = nxt.attempt or lot.attempt or 1
     out = out_dir or _out_dir(cfg, plat, lot, nxt.phase, lot_attempt)
@@ -525,6 +587,20 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
                                 cfgl.get("plan", ""), crit,
                                 _verdict_of(db, gate_a) or {}, out, prior=prior_art(db, lot.repo),
                                 upstream=upstream_handoff(db, plat, lot))
+    if cfgl.get("kind") == "investigation":
+        if nxt.phase == "code":
+            prompt = P.build_investigation(lot, plat, wt, crit, cfgl.get("plan", ""), out)
+        else:
+            from .models import Artifact
+            evidence = db.scalars(select(Artifact).join(Attempt, Attempt.id == Artifact.attempt_id)
+                .where(Attempt.lot_id == lot.id, Attempt.phase == "code", Artifact.name == "code.md")
+                .order_by(Artifact.id.desc())).first()
+            prompt += "\nThis is an evidence-only investigation; no repository diff is required.\n"
+            if evidence:
+                prompt += "\n## Investigation evidence\n" + evidence.body
+    if nxt.phase in ("docs", "quality"):
+        prompt = P.build_support(nxt.phase, lot, plat, wt, crit,
+                                 _verdict_of(db, _latest(db, lot, phases=["gate"])) or {}, out)
     if lot.human_note:
         prompt += "\n## Human decision for this attempt\n\n" + lot.human_note + "\n"
     if nxt.phase == "code":
@@ -537,6 +613,10 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
     a = Attempt(lot_id=lot.id, phase=nxt.phase, n=lot_attempt,
                 provider=role.provider, model=role.model,
                 role_binding={**asdict(role), "role": role.name, "resumed": bool(role.session_id)})
+    from .ownership import current, host_id
+    claim = current.get()
+    a.host_id, a.executor_id = host_id(), cfg.origin_id
+    a.claim_generation = claim[2] if claim else None
     d = record(db, plat_id=plat.id, lot_id=lot.id, parent_id=parent,
                actor="system", actor_detail="runner.dispatch", kind="transition",
                decision=f"{nxt.phase} attempt {lot_attempt}", rationale=nxt.reason,
@@ -545,11 +625,13 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
                               setattr(lot, "attempt", lot_attempt),
                               setattr(lot, "heartbeat_at", datetime.now(timezone.utc)), db.add(a)))
     parent = d.id
+    from . import sessions
+    sessions.launched(db, cfg, plat, lot, a)
     db.commit()          # an in-flight attempt must be visible while it is in flight
     note = " (resuming session)" if role.session_id else ""
     log(f"  {nxt.phase}: {role.provider}/{role.model}{note} ...")
 
-    before = _worktree_fingerprint(wt) if nxt.phase != "code" else None
+    before = _worktree_fingerprint(wt) if nxt.phase != "code" or cfgl.get("kind") == "investigation" else None
     seq = itertools.count()
     residue = [""]          # a chunk can end mid-line; the tail belongs to the next
 
@@ -594,8 +676,13 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
     _chunk("\n")  # flush the last unterminated provider event
     # PID and abort updates were committed by other sessions. Refresh before
     # clearing: assigning None to a cached None would leave the real PID behind.
+    db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
     db.refresh(a)
     db.refresh(lot)
+    sessions.complete(db, a, res)
+    from .lifecycle import local_revision
+    lot.config = {**(lot.config or {}), 'observed_revision': local_revision(lot),
+                  'observed_at': datetime.now(timezone.utc).isoformat()}
     a.exit_code = res.exit_code
     a.cost_usd = res.cost_usd
     a.cost_estimated = res.cost_estimated
@@ -634,7 +721,7 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
         blocked = nxt.phase == "code" and (verdict.get("needs_human") or verdict.get("status") == "blocked")
         if not blocked and (len(ids) != len(expected) or set(ids) != set(expected)):
             raise ingest.ContractError(f"criterion IDs must match declared scope: {expected}; received {ids}")
-        if nxt.phase == "review" and verdict.get("verdict") == "pass" and verdict.get("findings"):
+        if nxt.phase in ("review", "quality", "docs") and verdict.get("verdict") == "pass" and verdict.get("findings"):
             raise ingest.ContractError("a passing review cannot contain unresolved findings")
         if nxt.phase == "code" and verdict.get("lot") != lot.key:
             raise ingest.ContractError("code verdict names a different lot")

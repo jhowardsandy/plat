@@ -61,9 +61,9 @@ stale_after_s = {stale_after_s}
 max_attempts = {max_attempts}
 
 # Which phases a plat runs when its own spec does not say. The ORDER is fixed --
-# code, review -- you cannot review before you code. ["code"] is supported
+# code, review, docs, quality -- you cannot review before you code. ["code"] is supported
 # only when every criterion has an independent verify command.
-# docs and quality are not implemented and are rejected.
+# docs and quality require documenter and reviewer.quality roles.
 phases = {phases}
 
 # Plat interrupts YOU when a run needs you, and never announces to anyone else --

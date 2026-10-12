@@ -71,7 +71,6 @@ def run(db, cfg: Config, *, repo: Path, base: str | None, role_name: str,
 
     now = datetime.now(timezone.utc)
     anchor = f"review/{repo_name}@{branch}"[:160]
-    from . import fsm, runner
     from .decisions import record
     p = Plat(anchor=anchor, title=branch, kind="review", status="running",
              tickets=[], related=[], budget_usd=0.0, origin_id=cfg.origin_id, started_at=now)
@@ -83,6 +82,14 @@ def run(db, cfg: Config, *, repo: Path, base: str | None, role_name: str,
            decision="standalone review requested", inputs={"base": base, "head": _git(["rev-parse", "HEAD"], repo)},
            apply=lambda: db.add(lot))
     db.commit()
+    from .ownership import execution
+    with execution(db, cfg, p, lot):
+        return _execute(db, cfg, p, lot, test_cmd, changed, role_name, log)
+
+
+def _execute(db, cfg, p, lot, test_cmd, changed, role_name, log):
+    from . import fsm, runner
+    from .decisions import record
     gate = {"cmd": "(not run)", "exit_code": None, "tests_passed": 0,
             "tests_failed": 0, "diff_files": len(changed),
             "note": "NO independent verification was run. Do not assume the tests pass."}

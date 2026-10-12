@@ -215,3 +215,20 @@ The current reading is **{last}**. Two rules about it:
   iterations of drift.
 
 """
+
+
+def build_support(phase, lot, plat, wt, criteria, gate, out):
+    import json
+    return (_t(phase + ".md").replace("{anchor}", plat.anchor)
+            .replace("{lot}", lot.key).replace("{worktree}", str(wt))
+            .replace("{criteria}", criteria_block(criteria))
+            .replace("{gate}", json.dumps(gate, indent=2))
+            .replace("{termination}", termination(out, phase)))
+
+
+def build_investigation(lot, plat, wt, criteria, description, out):
+    return (f"# Evidence-only investigation: {plat.anchor}/{lot.key}\n"
+            f"Inspect {wt} read-only. Do not change or commit repository files.\n"
+            f"Write code.md as a research report: observations, source references, uncertainty, "
+            f"answers to the acceptance criteria, and recommended next actions.\n\n{description}\n\n"
+            + criteria_block(criteria) + "\n" + termination(out, "code"))

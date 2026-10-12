@@ -63,8 +63,8 @@ roles:
     resume_session: false           # fresh eyes, every time
     queue: q.review
 
-  # v1+ -- unused by the v0 pipeline, which stops at review
-  documenter:        {provider: gemini, model: gemini-flash-latest, approval_mode: auto_edit}
+  # Optional documentation artifact and quality review phases
+  documenter:        {provider: claude, model: sonnet, permission_mode: acceptEdits, allowed_tools: [Read, Glob, Grep, Bash, Write]}
   reviewer.quality:  {provider: claude, model: opus}
   closer:            {provider: claude, model: opus}
   recorder:          {provider: claude, model: opus}

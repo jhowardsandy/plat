@@ -149,3 +149,15 @@ JOIN attempts a ON a.lot_id = l.id
 LEFT JOIN verdicts v ON v.attempt_id = a.id
 WHERE p.kind = 'review'
 ORDER BY p.id DESC;
+
+DROP VIEW IF EXISTS v_claim_status;
+CREATE VIEW v_claim_status AS
+SELECT lot_id, executor_id, generation, expires_at, active,
+       active AND expires_at <= now() AS reconciliation_required
+FROM execution_claims;
+
+DROP VIEW IF EXISTS v_session_status;
+CREATE VIEW v_session_status AS
+SELECT id, public_id, lot_id, provider, state, source, last_activity,
+       state IN ('active', 'idle') AND last_activity < now() - interval '10 minutes' AS stale
+FROM tracked_sessions;

@@ -56,7 +56,7 @@ account you are signed into; there are no API keys to configure.
 uv tool install --editable .     # puts `plat` on PATH
 plat setup                       # guided: probes what your account can reach, then configures
 plat init                        # schema and views
-plat skills                      # links /plat-up and /plat-run into ~/.claude/skills
+plat skills                      # links workflows for both Claude and Codex
 plat probe                       # does each agent CLI honour the contract, and is it honest?
 plat demo                        # seed a board so the first `plat ui` is not empty
 ```
@@ -126,31 +126,29 @@ Plat calls this **API-equivalent cost**, and that is the label you will see in
 `plat history` and `plat top`. Claude reports it; Codex and Gemini report only
 tokens, so theirs is estimated from published rates and shown with a `~`.
 
-## Status, and what it does not do yet
+## Full workflow and team collaboration
 
-Working and used in anger, but early. A plat runs `PENDING → CODING → GATE →
-REVIEWING → DONE | BLOCKED` per lot, with session resume, model escalation,
-oscillation detection and budget ceilings, and it has taken real tickets from a
-ticket file through to a merged pull request.
+The local development loop now extends through accepted context and specification,
+independent integration checks, a recorded delivery package, explicit test deployment,
+product validation, and readiness. Start with `plat workflow begin`; existing local
+runs remain compatible. See **[docs/WORKFLOW.md](docs/WORKFLOW.md)** for the complete
+operator guide, input examples, recovery, and team trust boundaries.
 
-Three limits worth knowing **before** you plan a multi-lot run, because each is
-invisible until it surprises you:
+- `plat doctor` checks configuration, migrations, binaries and stranded claims.
+- `plat sessions` tracks launched and explicitly attached Claude/Codex sessions.
+- By default, lots run one after another. `plat start --workers N` runs independent lots concurrently; bounded budgets stay serial.
+- `plat start --dispatcher celery` queues work for the owning installation.
+- `plat team serve` provides an authenticated team board, assignments, questions,
+  review requests, responses and durable activity replay.
+- `plat workflow` records integration, packages, deployment, validation and the abstract.
 
-> **Lots run one after another, not in parallel.** `plat start` walks them in a
-> loop. Splitting by repo buys isolation and an independent review per lot — it
-> does not buy wall-clock. Real parallelism is the Celery dispatcher, and
-> `dispatch/` is four stubs today.
-
-> **`depends_on` carries ordering and reported contracts.** Lot B waits for A to
-> reach DONE, then its coder and reviewer receive A's latest structured `handoff[]`.
-> These are agent reports; integration tests must still verify the seam.
-
-> **Only `code` and `review` are executable phases.** Planning rejects `docs` and
-> `quality` until their prompts, contracts and verification are implemented. Changing
-> their provider alone does not make them work.
-
-Also unbuilt: closing the traverse, the recording package, the abstract, and
-Alembic. [docs/GUIDE.md §10](docs/GUIDE.md) is the honest list.
+All four lot phases (`code`, `review`, `docs`, `quality`) have contracts and execution
+paths. Docs produces a durable documentation artifact; repository edits remain with
+the coder. Gemini is not implemented. The team pilot uses one database per trusted
+team, manually provisioned credentials and trusted executor machines. SSO,
+service-only remote execution, automatic desktop-session discovery, and production
+deployment are outside the implemented pilot. Real project and two-machine
+qualification remain necessary before broader rollout.
 
 ## Reliability and local use
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .fsm import parse_objective
 
-IMPLEMENTED_PHASES = frozenset({"code", "review"})
+IMPLEMENTED_PHASES = frozenset({"code", "review", "docs", "quality"})
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]*\Z")
 
@@ -62,7 +62,7 @@ def validate(spec, root: Path, phases=None, *, executable=False) -> list[str]:
         errors.append("phases must not contain duplicates")
     unsupported = set(selected) - IMPLEMENTED_PHASES
     if unsupported:
-        errors.append(f"unsupported phases: {', '.join(sorted(unsupported))}; implemented: code, review")
+        errors.append(f"unsupported phases: {', '.join(sorted(unsupported))}; implemented: code, review, docs, quality")
     lots = spec.get("lots")
     if not isinstance(lots, list) or not lots:
         return errors + ["no lots, and needs_human is not set — supply a nonempty list"]
@@ -95,6 +95,8 @@ def validate(spec, root: Path, phases=None, *, executable=False) -> list[str]:
                 errors.append(f"{label}: worktree path escapes .worktrees")
         if "plan" in lot and not isinstance(lot["plan"], str):
             errors.append(f"{label}.plan must be text")
+        if lot.get("kind", "development") not in ("development", "investigation"):
+            errors.append(f"{label}: kind must be development or investigation")
         ref = lot.get("base_ref")
         if ref is not None and (not isinstance(ref, str) or not REF.fullmatch(ref) or ".." in ref or "//" in ref):
             errors.append(f"{label}: unsafe base_ref")

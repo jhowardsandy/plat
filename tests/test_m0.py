@@ -63,8 +63,8 @@ def project(tmp_path):
     ({"anchor": "../escape"}, "anchor"),
     ({"anchor": "x;touch pwn"}, "anchor"),
     ({"slug": "../escape"}, "slug"),
-    ({"phases": ["code", "docs"]}, "unsupported"),
-    ({"phases": ["code", "quality"]}, "unsupported"),
+    ({"phases": ["code", "unknown"]}, "unsupported"),
+    ({"phases": ["code", "not-a-phase"]}, "unsupported"),
     ({"phases": ["review"]}, "include code"),
     ({"phases": "code"}, "list"),
     ({"budget_usd": float("nan")}, "finite"),
@@ -357,7 +357,7 @@ def test_dry_run_with_tracker_never_commits_rows(case, monkeypatch):
 
 def test_invalid_spec_has_no_side_effects(case, monkeypatch):
     monkeypatch.setattr(DB, "session", lambda: pytest.fail("opened database for invalid spec"))
-    d = valid_spec(phases=["code", "docs"])
+    d = valid_spec(phases=["code", "unknown"])
     path = case.project / "bad.yaml"; path.write_text(yaml.safe_dump(d))
     result = CliRunner().invoke(cli.app, ["plan", str(path), "--commit"])
     assert result.exit_code == 1 and "unsupported" in result.output

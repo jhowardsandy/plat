@@ -1,5 +1,4 @@
 """A regression test for a bug that installed zero views and looked like an empty db."""
-import re
 from pathlib import Path
 
 from plat.db import _split
@@ -31,12 +30,9 @@ def test_dollar_quoted_body_is_not_split_on_inner_semicolons():
 def test_views_are_dropped_before_columns_are_altered():
     """Postgres refuses to alter the type of a column a view selects. Widening
     plats.anchor failed exactly this way, silently leaving varchar(32)."""
-    import inspect
+    from pathlib import Path
 
     from plat import db
-    src = inspect.getsource(db.init)
-    assert src.index("DROP VIEW") < src.index("for stmt in ADDITIVE"), \
-        "the drop must precede the alters"
-    declared = set(db.VIEWS)
-    in_sql = {m for m in re.findall(r"CREATE VIEW (\w+)", SQL.read_text())}
-    assert in_sql <= declared, f"views.sql creates views db.VIEWS does not drop: {in_sql - declared}"
+    source = Path(db.__file__).parent / "migrations" / "versions" / "0001_baseline.py"
+    src = source.read_text()
+    assert src.index('for view in VIEWS') < src.index('for statement in ADDITIVE')

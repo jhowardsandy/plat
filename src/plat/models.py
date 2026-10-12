@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -24,7 +26,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
-    pass
+    public_id: Mapped[str] = mapped_column(String(36), unique=True,
+                                         default=lambda: str(uuid4()))
 
 
 def _pk() -> Mapped[int]:
@@ -73,6 +76,7 @@ class Plat(Base):
 class Lot(Base):
     """One unit of work: one agent, one worktree, one session at a time."""
     __tablename__ = "lots"
+    __table_args__ = (UniqueConstraint("plat_id", "key", name="uq_lot_key"),)
     id: Mapped[int] = _pk()
     plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), index=True)
     key: Mapped[str] = mapped_column(String(64))          # usually the repo name
@@ -113,6 +117,9 @@ class Attempt(Base):
     # terminal that launched it does not kill it -- which is good (no half-written
     # files) and bad (it keeps running, unwatched, against a lot whose heartbeat
     # has gone cold). A later session needs this to tell those apart.
+    executor_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = _now()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -226,7 +233,7 @@ class Decision(Base):
     """
     __tablename__ = "decisions"
     id: Mapped[int] = _pk()
-    plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), index=True)
+    plat_id: Mapped[int | None] = mapped_column(ForeignKey("plats.id"), index=True, nullable=True)
     lot_id: Mapped[int | None] = mapped_column(ForeignKey("lots.id"), nullable=True, index=True)
     attempt_id: Mapped[int | None] = mapped_column(ForeignKey("attempts.id"), nullable=True)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("decisions.id"), nullable=True)
@@ -246,7 +253,7 @@ class Event(Base):
     """Append-only. A trigger NOTIFYs on insert; that is the whole live-update path."""
     __tablename__ = "events"
     id: Mapped[int] = _pk()
-    plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), index=True)
+    plat_id: Mapped[int | None] = mapped_column(ForeignKey("plats.id"), index=True, nullable=True)
     lot_id: Mapped[int | None] = mapped_column(ForeignKey("lots.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(32))
     message: Mapped[str] = mapped_column(Text)
@@ -256,3 +263,97 @@ class Event(Base):
 
 Index("ix_findings_identity", Finding.origin_id, Finding.anchor,
       Finding.repo, Finding.fingerprint)
+
+
+class ExecutionClaim(Base):
+    __tablename__ = "execution_claims"
+    lot_id: Mapped[int] = mapped_column(ForeignKey("lots.id"), primary_key=True)
+    resource: Mapped[str] = mapped_column(Text)
+    executor_id: Mapped[str] = mapped_column(String(64))
+    host_id: Mapped[str] = mapped_column(String(64))
+    token: Mapped[str] = mapped_column(String(36))
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = _now()
+
+
+Index("uq_active_resource", ExecutionClaim.resource, unique=True,
+      postgresql_where=ExecutionClaim.active.is_(True))
+
+
+class Workflow(Base):
+    __tablename__ = "workflows"
+    plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), primary_key=True)
+    stage: Mapped[str] = mapped_column(String(24), default="context")
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    spec_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    owner: Mapped[str] = mapped_column(String(128))
+    requirements: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = _now()
+
+
+class StageRecord(Base):
+    __tablename__ = "stage_records"
+    id: Mapped[int] = _pk()
+    plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(24))
+    version: Mapped[int] = mapped_column(Integer)
+    content: Mapped[dict] = mapped_column(JSONB)
+    sha256: Mapped[str] = mapped_column(String(64))
+    actor: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = _now()
+
+
+class TrackedSession(Base):
+    __tablename__ = "tracked_sessions"
+    __table_args__ = (UniqueConstraint("installation", "provider", "session_key",
+                                      name="uq_session_identity"),)
+    id: Mapped[int] = _pk()
+    plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), index=True)
+    lot_id: Mapped[int] = mapped_column(ForeignKey("lots.id"), index=True)
+    attempt_id: Mapped[int | None] = mapped_column(ForeignKey("attempts.id"), nullable=True)
+    installation: Mapped[str] = mapped_column(String(64))
+    host_id: Mapped[str] = mapped_column(String(64))
+    owner: Mapped[str] = mapped_column(String(128))
+    provider: Mapped[str] = mapped_column(String(16))
+    session_key: Mapped[str] = mapped_column(String(128))
+    provider_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source: Mapped[str] = mapped_column(String(16))
+    state: Mapped[str] = mapped_column(String(16))
+    capabilities: Mapped[dict] = mapped_column(JSONB, default=dict)
+    last_activity: Mapped[datetime] = _now()
+
+
+class CollaborationItem(Base):
+    __tablename__ = "collaboration_items"
+    id: Mapped[int] = _pk()
+    plat_id: Mapped[int] = mapped_column(ForeignKey("plats.id"), index=True)
+    lot_id: Mapped[int | None] = mapped_column(ForeignKey("lots.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    owner: Mapped[str] = mapped_column(String(128))
+    author: Mapped[str] = mapped_column(String(128))
+    state: Mapped[str] = mapped_column(String(16), default="open")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    body: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
+
+
+class CommandReceipt(Base):
+    __tablename__ = "command_receipts"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = _now()
+
+
+class TeamMember(Base):
+    __tablename__ = 'team_members'
+    id: Mapped[int] = _pk()
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    role: Mapped[str] = mapped_column(String(16))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = _now()

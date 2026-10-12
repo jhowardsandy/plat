@@ -206,7 +206,7 @@ shape` puts a cheap reconnaissance pass in front of it:
 
 ```
 1  split by repo (2 lots)   2 lots   ~$7.22   ~19 min
-   isolated blast radius and one review each; not faster until lots run in parallel
+   isolated blast radius and one review each; use `--workers` for parallelism
 2  single lot               1 lot    ~$3.61   ~10 min
    cheapest; one agent holds the whole change and one failure loses all of it
 3  spike first              1 lot    ~$0.61    ~1 min
@@ -294,7 +294,7 @@ over. It is there because the alternative is a feature that goes unused for week
 and looks like it is working.
 
 Be sparse with edges even so. A false dependency serialises work for no reason,
-and lots are serial today regardless — an edge buys ordering you can rely on and
+and an edge buys ordering you can rely on and
 a contract that crosses, not speed. A test that exercises the seam is still worth
 more than an edge, because it is checked rather than assumed.
 
@@ -511,22 +511,24 @@ question the file cannot answer. `plat init` now backfills those settings, with
 the paragraphs explaining them, and touches nothing already there.
 
 Phase **order** is deliberately not configurable. The executable sequence is
-`code → gate → review`. `phases: [code]` omits review but requires executable
-verification for every lot criterion. `docs` and `quality` are future stages and
-are rejected before execution. `PLAT_PHASES` accepts comma-separated names. Retry
-and stale settings are snapshotted at plan time; changing defaults affects newly
-accepted plans, not a run already underway.
+`code → gate → review → docs → quality`. `phases: [code]` omits review but requires executable
+verification for every lot criterion. `docs` and `quality` are executable with dedicated prompts and contracts.
+The documenter produces an artifact; the quality reviewer assesses the worktree read-only.
+Configure their roles before enabling them.
 
 ## 10. What is not built yet
 
 - **Converge mode has never run against real agents.** The state machine is
   exhaustively tested — objective direction, stalling, ceilings, gaming — but no
   live lot has iterated yet.
-- **The Celery dispatcher.** Dependency ordering and handoffs work in the serial runner. The dispatcher interface and implementations in `dispatch/` are still stubs; parallel execution is unbuilt.
-- **Closing the traverse, recording, the abstract.** The whole run-level join, including the cross-repo contract check.
-- **`docs` and `quality` phases.** FSM placeholders only. Dedicated prompts, contracts and execution are incomplete; changing providers does not enable them.
-- **Prior-art retrieval.** `findings` is the corpus; a `pgvector` column would let past findings sharpen review prompts.
-- **Alembic.** `init` applies additive `ALTER … IF NOT EXISTS` as a stopgap; that handles added columns and nothing else.
+See [the full lifecycle and team guide](WORKFLOW.md) for the implemented dispatcher,
+Alembic migrations, session tracking, collaboration service, integration, packages,
+test deployments and readiness. `plat doctor` checks the installation.
+
+The pilot deliberately keeps one trusted team per database and provider execution
+on developer machines. SSO, a service-only remote executor transport, automatic
+session discovery and production deployment remain outside this pilot. Qualify a
+real local ticket and a two-machine team scenario before broader rollout.
 
 ## 11. Failure modes worth knowing
 
@@ -577,13 +579,12 @@ same execution checks, persists its evidence, and distinguishes skipped tests
 from successful independent verification.
 
 If a supervisor dies, a live recorded agent prevents further work on that lot.
-After it exits, an unfinished attempt is marked interrupted and blocked; inspect
+After it exits, reconcile any expired execution claim on its owning installation; an unfinished attempt is blocked. Inspect
 its preserved work and use `plat reopen --note` to recover. Reopening launches a
 fresh coder attempt with the human answer, preserves history, resets the retry
 allowance and invalidates dependent lots and the previous delivery claim. It
 cannot alter shipped work or race an active downstream lot.
 
 All-DONE plus passing run checks means local delivery. ABORTED required work means
-incomplete work. Neither proves deployment or product readiness; those lifecycle
-stages remain planned. `plat close --note` records the operator's actual shipment
+incomplete work. Neither proves deployment or product readiness; full-lifecycle runs add those requirements through `plat workflow`. `plat close --note` records the operator's actual shipment
 statement only after full local delivery.

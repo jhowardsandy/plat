@@ -233,9 +233,9 @@ git -C <worktree> diff origin/main..HEAD
 | the database will not start | port 5432 is taken; see the `PLAT_DB_PORT` note above |
 | `plat ui` shows an empty dashboard | nothing is running, which is correct — `plat demo` seeds a board to look at |
 | costs shown with `~` | estimated from tokens; Codex and Gemini do not report dollars |
-| a multi-lot plat is no faster | lots run one after another; parallelism is the unbuilt Celery dispatcher |
+| a multi-lot plat is no faster | use `--workers N` with `budget_usd: 0` for eligible independent lots |
 | lot B did not know what lot A built | Check A's latest `handoff[]`; an edge passes the reported contract to B's coder and reviewer |
-| unsupported phase/provider | Use `phases: [code, review]` and Claude or Codex; docs/quality and Gemini are not implemented |
+| unsupported phase/provider | Use code/review/docs/quality with configured Claude or Codex roles; Gemini is not implemented |
 
 ## Criterion ownership and recovery
 
@@ -280,3 +280,12 @@ After actual shipment, record it explicitly:
 ```bash
 plat close DEV-1234 --note "Merged PR 123 and validated the deployment"
 ```
+
+
+## Continue through delivery and team review
+
+Use `plat doctor` to qualify the installation, then follow [the full workflow guide](docs/WORKFLOW.md)
+for accepted context/specification, `plat sessions`, parallel or queued execution,
+integration, test deployment, readiness, and the authenticated `plat team` board.
+Existing local plans remain usable; `plat workflow begin` opts a planned run into
+required lifecycle acceptance and readiness checks before shipment.
