@@ -49,7 +49,7 @@ A **plat** divides one tract into numbered lots: independently developable, reco
 ## Install
 
 Requires Python 3.12+, Postgres, Docker (for the dashboard), and at least one agent
-CLI — `claude`, `codex` or `gemini` — already logged in. Plat shells out to whatever
+CLI — `claude` or `codex` — already logged in. Plat shells out to whatever
 account you are signed into; there are no API keys to configure.
 
 ```bash
@@ -104,7 +104,7 @@ reviewer.correctness:
   resume_session: false           # fresh eyes, every time
 ```
 
-Adapters ship for **Claude Code**, **Codex** and **Gemini**. All three are driven headlessly behind one uniform contract, so swapping a role's provider is a config change.
+Adapters ship for **Claude Code** and **Codex**. Both run headlessly behind one contract. Gemini is a future adapter, not an executable provider.
 
 ## What the dollar figures mean
 
@@ -141,16 +141,41 @@ invisible until it surprises you:
 > does not buy wall-clock. Real parallelism is the Celery dispatcher, and
 > `dispatch/` is four stubs today.
 
-> **`depends_on` orders lots; it does not hand anything over.** Lot B runs after
-> lot A, and B's context is the plat map as written *before* A ran. If B genuinely
-> needs to see what A built, it will not. Keep the contract between lots in the
-> plat map explicitly, or give B a gate that would fail if A's half is missing.
+> **`depends_on` carries ordering and reported contracts.** Lot B waits for A to
+> reach DONE, then its coder and reviewer receive A's latest structured `handoff[]`.
+> These are agent reports; integration tests must still verify the seam.
 
-> **`docs` cannot run**, because its default role points at Gemini and that adapter
-> is a stub. Point it at Claude, or leave the phase off.
+> **Only `code` and `review` are executable phases.** Planning rejects `docs` and
+> `quality` until their prompts, contracts and verification are implemented. Changing
+> their provider alone does not make them work.
 
 Also unbuilt: closing the traverse, the recording package, the abstract, and
 Alembic. [docs/GUIDE.md §10](docs/GUIDE.md) is the honest list.
+
+## Reliability and local use
+
+`plat plan` validates names, paths, dependencies, phases and criterion ownership
+before creating worktrees or running commands. A dry run creates worktrees and
+smokes their gates, but writes no database records. `--commit` records the accepted
+spec. An unstarted plan can be revised; a started plan is immutable. Use a new
+anchor for changed scope.
+
+Every lot owns explicit acceptance criteria. The supervisor runs their `verify`
+commands in that lot's worktree, independently of the agent. Code-only runs require
+a verify command for every criterion. Run-level criteria use `scope: run` and
+`verify_in: <lot-key>` and must pass before delivery.
+
+Provider failures, permission denials and coder questions stop at BLOCKED, even
+when a verdict file claims success. Recover with
+`plat reopen <anchor> <lot> --note "<answer or recovery decision>"`; the next start
+launches a fresh attempt. Reopening also invalidates downstream lots and obsolete
+delivery claims. An interrupted attempt needs explicit reconciliation after its
+process has stopped. Silent processes have a wall-clock timeout.
+
+`delivered` means every lot is DONE and run criteria passed locally. Aborted work
+is `incomplete`; neither outcome asserts deployment readiness. `plat close` accepts
+only a delivered plat and requires a shipment note. Start with local work, then
+use observed results and remaining limitations when demonstrating to the team.
 
 ## Licence
 

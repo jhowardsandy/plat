@@ -36,9 +36,9 @@ def load_verdict(out_dir: Path, phase: str) -> dict:
         raise ContractError(f"{f} was never written")
     try:
         data = json.loads(f.read_text())
-    except json.JSONDecodeError as e:
+    except (OSError, UnicodeError, json.JSONDecodeError) as e:
         raise ContractError(f"{f} is not valid JSON: {e}") from e
-    errs = sorted(_validator(phase).iter_errors(data), key=lambda e: e.path)
+    errs = sorted(_validator(phase).iter_errors(data), key=lambda e: tuple(map(str, e.path)))
     if errs:
         detail = "; ".join(f"{'/'.join(map(str, e.path)) or '<root>'}: {e.message}"
                            for e in errs[:5])
@@ -55,22 +55,13 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
         tests_passed=(verdict.get("tests") or {}).get("passed", 0),
         tests_failed=(verdict.get("tests") or {}).get("failed", 0),
     ))
-    if result.session_id:
-        db.add(SessionRow(attempt_id=attempt.id, provider=result.provider,
-                          provider_session_id=result.session_id))
-    for md in sorted(out_dir.glob("*.md")):
-        body = md.read_text()
-        db.add(Artifact(plat_id=plat.id, attempt_id=attempt.id, kind=attempt.phase,
-                        name=md.name, body=body,
-                        sha256=hashlib.sha256(body.encode()).hexdigest()))
-    if result.stdout:
-        db.add(Transcript(attempt_id=attempt.id, body=result.stdout[:4_000_000]))
+    evidence(db, plat=plat, attempt=attempt, result=result, out_dir=out_dir)
 
     # A finding that stopped being raised was fixed. Without this the corpus can
     # only ever say "someone once complained about X", never whether the complaint
     # survived -- which is most of its value as prior art (design doc §12), and
     # what separates a resolved finding from one dismissed on purpose.
-    if attempt.phase in ("review", "quality"):
+    if attempt.phase in ("review", "quality") and verdict.get("verdict") == "pass":
         still = {f["fingerprint"] for f in verdict.get("findings", [])}
         prior = db.scalars(
             select(Finding).join(Attempt, Attempt.id == Finding.attempt_id)
@@ -81,7 +72,7 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
             if f.fingerprint not in still:
                 f.resolved_in_attempt_id = attempt.id
 
-    for f in verdict.get("findings", []):
+    for f in (verdict.get("findings", []) if attempt.phase in ("review", "quality") else []):
         db.add(Finding(
             attempt_id=attempt.id, origin_id=plat.origin_id, anchor=plat.anchor,
             repo=lot.repo, fingerprint=f["fingerprint"], severity=f["severity"],
@@ -92,7 +83,7 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
     last = parent_decision_id
     # Self-reported. Weaker evidence than anything the supervisor observed, and
     # rendered differently everywhere it is shown.
-    for d in verdict.get("decisions", []):
+    for d in (verdict.get("decisions", []) if attempt.phase == "code" else []):
         if not d.get("alternatives"):
             continue
         last = record(
@@ -118,3 +109,17 @@ def persist(db: DbSession, *, plat, lot, attempt, verdict: dict, result,
             inputs={"verdict": label, "findings": n},
         ).id
     return last
+
+
+def evidence(db, *, plat, attempt, result, out_dir):
+    """Preserve observed output even when execution or its verdict failed."""
+    if result.session_id:
+        db.add(SessionRow(attempt_id=attempt.id, provider=result.provider,
+                          provider_session_id=result.session_id))
+    for md in sorted([*out_dir.glob("*.md"), *out_dir.glob("*.json")]):
+        body = md.read_text(errors="replace")
+        db.add(Artifact(plat_id=plat.id, attempt_id=attempt.id, kind=attempt.phase,
+                        name=md.name, body=body,
+                        sha256=hashlib.sha256(body.encode()).hexdigest()))
+    if result.stdout:
+        db.add(Transcript(attempt_id=attempt.id, body=result.stdout[:4_000_000]))

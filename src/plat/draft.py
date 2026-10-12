@@ -13,6 +13,7 @@ be the one change that could make a bad decomposition expensive instead of cheap
 from __future__ import annotations
 
 import subprocess
+import uuid
 from pathlib import Path
 
 import yaml
@@ -86,52 +87,8 @@ def _cycles(lots: list[dict]) -> list[list[str]]:
 
 
 def validate(spec: dict, root: Path) -> list[str]:
-    """Check the draft against what `plat plan` will actually require.
-
-    Catching this here means the failure is a line you can edit, rather than a
-    traceback twenty minutes later with a worktree half-created.
-    """
-    errs: list[str] = []
-    if not spec.get("anchor"):
-        errs.append("anchor is missing")
-    if spec.get("needs_human"):
-        return errs                      # an honest refusal is not a broken draft
-    lots = spec.get("lots") or []
-    if not lots:
-        errs.append("no lots, and needs_human is not set — say which it is")
-    keys = {l.get("key") for l in lots}
-    for loop in _cycles(lots):
-        errs.append("dependency cycle: " + " -> ".join(loop)
-                    + " — every lot in it would wait on another forever")
-    for i, l in enumerate(lots):
-        where = f"lots[{i}] ({l.get('key', '?')})"
-        for k in REQUIRED_LOT:
-            if not l.get(k):
-                errs.append(f"{where}: {k} is missing")
-        repo = l.get("repo")
-        if repo and not (root / repo / ".git").exists():
-            errs.append(f"{where}: repo {repo!r} does not exist under the workspace")
-        g = l.get("gate") or {}
-        if not g.get("test"):
-            errs.append(f"{where}: gate.test is missing")
-        if not g.get("setup"):
-            errs.append(f"{where}: gate.setup is missing — a fresh worktree has no venv")
-        for dep in l.get("depends_on") or []:
-            if dep not in keys:
-                errs.append(f"{where}: depends_on {dep!r} is not a lot in this plat")
-            if dep == l.get("key"):
-                errs.append(f"{where}: depends_on itself")
-        if l.get("mode") == "converge":
-            if not l.get("objective"):
-                errs.append(f"{where}: converge needs an objective")
-            if not g.get("probe"):
-                errs.append(f"{where}: converge needs gate.probe — nothing to steer by")
-    for i, c in enumerate(spec.get("criteria") or []):
-        if not c.get("statement"):
-            errs.append(f"criteria[{i}]: statement is missing")
-        if c.get("lot") and c["lot"] not in keys:
-            errs.append(f"criteria[{i}]: lot {c['lot']!r} is not a lot in this plat")
-    return errs
+    from .spec import validate as check
+    return check(spec, root)
 
 
 def unverifiable(spec: dict) -> list[str]:
@@ -147,8 +104,7 @@ def scout(db, cfg: Config, *, anchor: str, ticket: str, log=print) -> dict:
     repos = discover_repos(cfg.workspace_root)
     if not repos:
         raise DraftError(f"no git repositories under {cfg.workspace_root}")
-    out = home() / "drafts" / anchor
-    out.mkdir(parents=True, exist_ok=True)
+    out = _draft_dir(anchor)
     prompt = ((P.PACKS / "scout.md").read_text()
               .replace("{ticket}", ticket.strip() or "(no ticket text supplied)")
               .replace("{repos}", "\n".join(f"- {r}" for r in repos))
@@ -161,6 +117,8 @@ def scout(db, cfg: Config, *, anchor: str, ticket: str, log=print) -> dict:
     res = adapters.run(role, pf, out)
     log(f"    {res.duration_s:.0f}s  ${res.cost_usd:.2f}"
         f"{'~' if res.cost_estimated else ''}")
+    if not res.ok or res.exit_code != 0 or res.permission_denials:
+        raise DraftError(f"scout failed: {res.error or res.exit_code}; permission denials: {len(res.permission_denials)}")
     info = ingest.load_verdict(out, "scout")
     # A repo the scout named but that does not exist would send the whole run into
     # the wrong tree, so drop it here rather than at worktree time.
@@ -177,8 +135,7 @@ def run(db, cfg: Config, *, anchor: str, ticket: str, role_name: str = "planner"
                          f"check workspace_root in {home() / 'config.toml'}")
     log(f"  {len(repos)} repo(s) under {cfg.workspace_root}")
 
-    out = home() / "drafts" / anchor
-    out.mkdir(parents=True, exist_ok=True)
+    out = _draft_dir(anchor)
     context = prior_context(db)
     if shape:
         # Chosen by a person who can see what a planner cannot — which repo is
@@ -205,12 +162,16 @@ def run(db, cfg: Config, *, anchor: str, ticket: str, role_name: str = "planner"
     log(f"    exit={res.exit_code} {res.duration_s:.0f}s "
         f"${res.cost_usd:.2f}{'~' if res.cost_estimated else ''}")
 
+    if not res.ok or res.exit_code != 0 or res.permission_denials:
+        raise DraftError(f"planner failed: {res.error or res.exit_code}; permission denials: {len(res.permission_denials)}")
     f = out / "plat.yaml"
     if not f.exists():
         raise DraftError(
             f"the planner wrote no plat.yaml (see {out}). If the role uses "
             f"permission_mode: plan, that is why -- plan mode blocks every write, "
             f"including this one, and says nothing about it.")
+    if not (out / "plan.md").is_file():
+        raise DraftError(f"the planner wrote no plan.md reasoning (see {out})")
     try:
         spec = yaml.safe_load(f.read_text())
     except yaml.YAMLError as e:
@@ -234,3 +195,12 @@ def _dirty(repo: Path) -> bool:
     r = subprocess.run(["git", "status", "--porcelain"], cwd=str(repo),
                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
     return bool(r.stdout.strip())
+
+
+def _draft_dir(anchor: str) -> Path:
+    from .spec import NAME
+    if not NAME.fullmatch(anchor) or len(anchor) > 160:
+        raise DraftError("anchor must contain only letters, digits, underscores and hyphens")
+    out = home() / "drafts" / anchor / uuid.uuid4().hex
+    out.mkdir(parents=True)
+    return out

@@ -67,7 +67,9 @@ A lot reaches `BLOCKED` for one of four reasons, and they need different respons
 | attempts exhausted | three tries, still failing | look at what actually changed each time before reopening |
 | contract not honoured | the agent never wrote valid verdict JSON | check `permission_denials` and the transcript first; this is usually environmental |
 
-Reopen with the reason recorded:
+Reopen with the reason recorded. This queues a fresh coding attempt (the `CODING`
+option remains a compatibility alias for `PENDING`), resets its retry allowance,
+and invalidates dependent lots and obsolete delivery claims:
 
 ```bash
 plat reopen <TICKET> <lot> --state CODING --note "<the ruling, and why>"

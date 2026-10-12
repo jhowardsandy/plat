@@ -170,6 +170,8 @@ class Criterion(Base):
     lot_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ac_id: Mapped[str] = mapped_column(String(16))
     statement: Mapped[str] = mapped_column(Text)
+    scope: Mapped[str] = mapped_column(String(8), default="lot", server_default="lot")
+    verify_in: Mapped[str | None] = mapped_column(String(64), nullable=True)
     verify_cmd: Mapped[str | None] = mapped_column(Text, nullable=True)
     met_in_attempt_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

@@ -1,9 +1,7 @@
-"""The ONLY mutation path.
+"""Domain mutations and evidence share a transaction with a recorded decision.
 
-No CLI command and no task writes a bare UPDATE. Every change to a plat goes
-through record(), which writes the decision row and applies the change in ONE
-transaction -- so it is structurally impossible to change a plat without leaving
-a record of who decided, what else was on the table, and what they were looking at.
+Operational heartbeats, PIDs and live logs may be written independently. They
+never authorize a state transition. See CLAUDE.md for this bounded exception.
 """
 from __future__ import annotations
 

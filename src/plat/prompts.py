@@ -9,7 +9,7 @@ def _t(name: str) -> str:
     return (PACKS / name).read_text()
 
 
-CODE_SHAPE = """{
+CODE_SHAPE = r"""{
   "lot": "<the lot key you were given>",
   "phase": "code",
   "attempt": 1,
@@ -141,7 +141,7 @@ def handoff_block(rows) -> str:
 
 
 def build_code(lot, plat, wt, branch, base, plat_map, lot_desc, criteria,
-               findings, test_cmd, out_dir, upstream=None) -> str:
+               findings, test_cmd, out_dir, upstream=None, attempt=None) -> str:
     return (_t("code.md")
             .replace("{anchor}", plat.anchor).replace("{lot_key}", lot.key)
             .replace("{repo}", lot.repo).replace("{worktree}", str(wt))
@@ -149,10 +149,10 @@ def build_code(lot, plat, wt, branch, base, plat_map, lot_desc, criteria,
             .replace("{plat_map}", plat_map or "_not supplied_")
             .replace("{lot_desc}", lot_desc or "_not supplied_")
             .replace("{criteria}", criteria_block(criteria))
-            .replace("{feedback}", feedback_block(findings, lot.attempt))
+            .replace("{feedback}", feedback_block(findings, attempt or lot.attempt))
             .replace("{upstream}", handoff_block(upstream))
             .replace("{test_cmd}", test_cmd)
-            .replace("{termination}", termination(out_dir, "code")))
+            .replace("{termination}", termination(out_dir, "code").replace('"attempt": 1', f'"attempt": {attempt or lot.attempt}')))
 
 
 def build_review(lot, plat, wt, base, lot_desc, criteria, gate, out_dir,
@@ -161,7 +161,22 @@ def build_review(lot, plat, wt, base, lot_desc, criteria, gate, out_dir,
          f"- exit code: {gate['exit_code']}\n"
          f"- passed: {gate['tests_passed']}, failed: {gate['tests_failed']}\n"
          f"- files changed: {gate['diff_files']}")
+    if gate.get("note"):
+        g += "\n- " + gate["note"]
+    for check in gate.get("criteria_check", []):
+        g += f"\n- {check['id']}: supervisor verify exit {check.get('exit_code')}"
+    if gate.get("exit_code") is None:
+        verification_summary = "No independent tests were run for this review."
+        verification_guidance = "Check any test claims you rely on; absence of verification is not evidence of passing tests."
+    elif gate["exit_code"] != 0:
+        verification_summary = "Independent verification failed."
+        verification_guidance = "Investigate the failed checks and report the unresolved problems."
+    else:
+        verification_summary = "The supervisor independently ran the configured checks."
+        verification_guidance = "Review correctness beyond these checks, including uncovered inputs and contract drift."
     return (_t("review.md")
+            .replace("{verification_summary}", verification_summary)
+            .replace("{verification_guidance}", verification_guidance)
             .replace("{anchor}", plat.anchor).replace("{lot_key}", lot.key)
             .replace("{worktree}", str(wt)).replace("{base}", base)
             .replace("{lot_desc}", lot_desc or "_not supplied_")

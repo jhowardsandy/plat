@@ -158,15 +158,20 @@ def test_the_password_is_redacted():
     assert "hunter2" not in redact("postgresql://u:hunter2@h/d")
 
 
-def test_yes_takes_the_default_it_does_not_say_yes_to_everything():
-    """`yes or Confirm.ask(...)` short-circuits true and enables a phase nobody
-    chose. --yes means "accept the defaults", not "opt into everything"."""
-    import inspect
+def test_yes_takes_the_default_it_does_not_say_yes_to_everything(tmp_path, monkeypatch):
+    """An unattended setup must never enable unfinished phases."""
+    import tomllib
+
+    from typer.testing import CliRunner
 
     from plat import cli
-    src = inspect.getsource(cli.setup)
-    assert "if not yes and Confirm.ask" in src
-    assert "if yes or Confirm.ask" not in src
+    monkeypatch.setenv("PLAT_HOME", str(tmp_path))
+    monkeypatch.setenv("PLAT_WORKSPACE", str(tmp_path / "repos"))
+    monkeypatch.setattr(S, "installed", lambda: {"claude": True, "codex": True, "gemini": True})
+    result = CliRunner().invoke(cli.app, ["setup", "--yes", "--no-probe"])
+    assert result.exit_code == 0, result.output
+    config = tomllib.loads((tmp_path / "config.toml").read_text())
+    assert config["phases"] == ["code", "review"]
 
 
 def test_the_docs_explain_what_the_dollar_figures_mean():

@@ -109,7 +109,7 @@ slug: <slug>
 budget_usd: 15
 tickets: []
 related: []
-phases: [code, review]        # v0 ships these two; docs/quality need their providers
+phases: [code, review]        # only implemented phases; docs/quality are rejected
 plat_map: |
   <the problem, the architecture, the contracts, what is out of scope>
 lots:

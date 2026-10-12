@@ -16,9 +16,6 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 
-from . import adapters, gates, ingest
-from . import prompts as P
-from . import roles as R
 from .config import Config, home
 from .models import Attempt, Finding, Lot, Plat, Verdict
 
@@ -74,60 +71,57 @@ def run(db, cfg: Config, *, repo: Path, base: str | None, role_name: str,
 
     now = datetime.now(timezone.utc)
     anchor = f"review/{repo_name}@{branch}"[:160]
-    p = Plat(anchor=anchor, title=branch, kind="review",
-             status="closed", tickets=[], related=[], budget_usd=0.0,
-             origin_id=cfg.origin_id, started_at=now, closed_at=now)
+    from . import fsm, runner
+    from .decisions import record
+    p = Plat(anchor=anchor, title=branch, kind="review", status="running",
+             tickets=[], related=[], budget_usd=0.0, origin_id=cfg.origin_id, started_at=now)
     db.add(p); db.flush()
     lot = Lot(plat_id=p.id, key=repo_name, repo=repo_name, worktree_path=str(repo),
-              state="REVIEWING", attempt=1, base_ref=base, depends_on=[], config={})
-    db.add(lot); db.flush()
-
-    gate = None
-    if test_cmd:
-        log(f"  gate: {test_cmd}")
-        g = gates.run(repo, test_cmd, base)
-        gate = g.as_dict()
-        log(f"    {g.tests_passed} passed, {g.tests_failed} failed")
-    else:
-        # The review prompt tells the reviewer the tests were verified
-        # independently. With no gate that is FALSE, and a reviewer who believes
-        # it will skip exactly what it should be checking.
-        gate = {"cmd": "(not run)", "exit_code": None, "tests_passed": 0,
-                "tests_failed": 0, "diff_files": len(changed),
-                "note": "NO independent verification was run. Do not assume the "
-                        "tests pass; if correctness depends on them, say so."}
-
-    out = home() / "reviews" / f"{p.id}"
-    out.mkdir(parents=True, exist_ok=True)
-    art = prior_art(db, repo_name)
-    if art:
-        log(f"  prior art: {len(art)} earlier finding(s) in this repo")
-
-    prompt = P.build_review(lot, p, repo, base, "", [], gate, out, prior=art)
-    pf = out / "prompt.md"; pf.write_text(prompt)
-
-    role = R.bind(cfg.roles(), role_name, 1)
-    a = Attempt(lot_id=lot.id, phase="review", n=1, provider=role.provider,
-                model=role.model, role_binding={"role": role_name, "standalone": True})
-    db.add(a); db.commit()
-    log(f"  review: {role.provider}/{role.model} ...")
-
-    res = adapters.run(role, pf, repo)
-    a.exit_code, a.cost_usd, a.cost_estimated = res.exit_code, res.cost_usd, res.cost_estimated
-    a.tokens_in, a.tokens_out = res.tokens_in, res.tokens_out
-    a.finished_at = datetime.now(timezone.utc)
-    a.permission_denials = len(res.permission_denials)
-    log(f"    exit={res.exit_code} {res.duration_s:.0f}s "
-        f"${res.cost_usd:.2f}{'~' if res.cost_estimated else ''}")
-
-    verdict = ingest.load_verdict(out, "review")
-    db.add(Verdict(attempt_id=a.id, raw=verdict, verdict=verdict["verdict"]))
-    for f in verdict.get("findings", []):
-        db.add(Finding(attempt_id=a.id, origin_id=cfg.origin_id, anchor=p.anchor,
-                       repo=repo_name, fingerprint=f["fingerprint"],
-                       severity=f["severity"], file=f["file"], line=f.get("line"),
-                       claim=f["claim"], required_fix=f.get("required_fix", "")))
-    lot.state = "DONE"
+              state="PENDING", attempt=1, base_ref=base, depends_on=[],
+              config={"gate": {"test": test_cmd}} if test_cmd else {})
+    record(db, plat_id=p.id, actor="human", actor_detail="cli.review", kind="transition",
+           decision="standalone review requested", inputs={"base": base, "head": _git(["rev-parse", "HEAD"], repo)},
+           apply=lambda: db.add(lot))
     db.commit()
-    found = db.scalars(select(Finding).where(Finding.attempt_id == a.id)).all()
-    return verdict["verdict"], list(found)
+    gate = {"cmd": "(not run)", "exit_code": None, "tests_passed": 0,
+            "tests_failed": 0, "diff_files": len(changed),
+            "note": "NO independent verification was run. Do not assume the tests pass."}
+    if test_cmd:
+        runner._run_gate(db, cfg, p, lot, None, log)
+        gate = runner._verdict_of(db, runner._latest(db, lot, phases=["gate"]))
+    else:
+        a = Attempt(lot_id=lot.id, phase="gate", n=1, provider="supervisor", model="local",
+                    exit_code=None, finished_at=datetime.now(timezone.utc))
+        def evidence():
+            db.add(a); db.flush()
+            db.add(Verdict(attempt_id=a.id, raw=gate))
+        record(db, plat_id=p.id, lot_id=lot.id, actor="system", actor_detail="review.gate",
+               kind="observation", decision="standalone verification not run", inputs=gate, apply=evidence)
+        db.commit()
+    db.refresh(lot)
+    db.refresh(p)
+    if lot.state == "ABORTED" or p.status == "aborted":
+        raise RuntimeError("standalone review was aborted")
+    nxt = fsm.Next("agent", fsm.LotState.REVIEWING, phase="review", role=role_name, attempt=1,
+                   reason="standalone review requested")
+    try:
+        runner._run_agent(db, cfg, p, lot, cfg.roles(), nxt, None, log,
+                          out_dir=home() / "reviews" / str(p.id))
+    except runner.Halt as exc:
+        db.refresh(p)
+        record(db, plat_id=p.id, actor="system", actor_detail="review.finish", kind="transition",
+               decision="review BLOCKED", rationale=str(exc), inputs={},
+               apply=lambda: setattr(p, "status", "blocked") if p.status != "aborted" else None)
+        db.commit()
+        raise RuntimeError(str(exc)) from exc
+    review_attempt = runner._latest(db, lot, phases=["review"])
+    verdict = runner._verdict_of(db, review_attempt)["verdict"]
+    if test_cmd and gate["exit_code"] != 0:
+        verdict = "blocked"
+    record(db, plat_id=p.id, lot_id=lot.id, actor="system", actor_detail="review.finish",
+           kind="transition", decision=f"standalone review {verdict}", inputs={"gate": gate},
+           apply=lambda: (setattr(lot, "state", "BLOCKED" if verdict == "blocked" else "DONE"),
+                          setattr(p, "status", "blocked" if verdict == "blocked" else "reviewed")))
+    db.commit()
+    found = db.scalars(select(Finding).where(Finding.attempt_id == review_attempt.id)).all()
+    return verdict, list(found)

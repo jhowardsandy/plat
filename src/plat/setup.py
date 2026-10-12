@@ -108,6 +108,9 @@ def build_roles(base: dict, coder_provider: str, coder_model: str,
                            "effort": p["coder"][1], "resume_session": True,
                            "permission_mode": "acceptEdits",
                            "escalate": dict(p["escalate"])})
+    if coder_provider != "claude":
+        roles["coder"]["escalate"] = {"attempt_2": {"effort": "high"},
+                                      "attempt_3": {"effort": "high"}}
     if coder_model != p["coder"][0] and coder_provider == "claude":
         roles["coder"]["model"] = coder_model
     roles.setdefault("reviewer.correctness", {})

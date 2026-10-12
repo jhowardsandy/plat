@@ -26,10 +26,13 @@ SELECT
   (l.heartbeat_at IS NOT NULL
    AND l.state NOT IN ('DONE','BLOCKED','PENDING','ABORTED')
    AND (now() - l.heartbeat_at) > greatest(
-         interval '10 minutes',
+         make_interval(secs => coalesce((l.config->>'stale_after_s')::int, 600)),
          make_interval(secs => coalesce(hist.median_s, 0) * 3)))  AS stale,
-  l.attempt >= 2                                  AS retrying,
-  l.attempt >= 3                                  AS last_chance,
+  l.attempt - coalesce((l.config->>'attempt_start')::int, 0) >= 2 AS retrying,
+  l.attempt >= coalesce((l.config->>'attempt_start')::int, 0) +
+    CASE WHEN l.config->>'mode' = 'converge'
+         THEN coalesce((l.config->>'max_iterations')::int, 8)
+         ELSE coalesce((l.config->>'max_attempts')::int, 3) END AS last_chance,
   l.state = 'BLOCKED'                             AS needs_human,
   (SELECT coalesce(sum(cost_usd), 0) FROM attempts WHERE lot_id = l.id) AS cost,
   -- true when ANY attempt's cost was estimated rather than reported

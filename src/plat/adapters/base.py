@@ -5,7 +5,9 @@ roles.yaml maps a role to a provider, and only this package knows how to run one
 """
 from __future__ import annotations
 
+import codecs
 import os
+import selectors
 import signal
 import subprocess
 import time
@@ -143,37 +145,24 @@ def terminate(pid: int | None, grace: float = 5.0,
 def spawn(cmd: list[str], cwd: Path, timeout_s: int, env: dict | None = None,
           on_chunk: Callable[[str], None] | None = None,
           on_pid: Callable[[int, str], None] | None = None) -> tuple[int, str, str, float]:
-    """Run an agent CLI to completion, streaming its output as it arrives.
+    """Stream with a wall-clock deadline, including when the entire group is silent.
 
-    Reading incrementally is what makes a live log tail possible at all: an agent
-    may run for an hour, and capturing everything at exit leaves nothing to watch
-    for the entire hour that matters.
-
-    stdin=DEVNULL is load-bearing: `codex exec` appends anything on stdin as a
-    <stdin> block, so an inherited terminal stdin silently corrupts the prompt.
-    start_new_session gives the child its own process group so a timeout kills the
-    whole tree rather than orphaning the CLI underneath it.
-
-    on_chunk is called on a coarse schedule -- roughly every 4KB, or when ~2s
-    have passed AS A LINE ARRIVES. It is not a timer: an agent that goes silent
-    mid-thought holds its buffered tail until it speaks again or exits. That is
-    an accepted limit, not an oversight; a flush thread would buy very little,
-    since agents emit output steadily, and cost a second thread per attempt.
+    stdin=DEVNULL avoids Codex consuming terminal input. A separate process group
+    lets timeout terminate the agent and the subprocesses it started together.
     """
     t0 = time.monotonic()
     p = subprocess.Popen(
         cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL, text=True, bufsize=1,
-        start_new_session=True, env=env,
+        stdin=subprocess.DEVNULL, bufsize=0, start_new_session=True, env=env,
     )
     if on_pid:
         try:
-            on_pid(p.pid, cmd[0])   # recorded before a single line is read, so a
-        except Exception:           # session that dies at once still leaves a trail
+            on_pid(p.pid, cmd[0])
+        except Exception:
             pass
-    out: list[str] = []
-    pending: list[str] = []
-    last = time.monotonic()
+    out, pending = [], []
+    last = t0
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def flush():
         nonlocal last
@@ -181,31 +170,46 @@ def spawn(cmd: list[str], cwd: Path, timeout_s: int, env: dict | None = None,
             try:
                 on_chunk("".join(pending))
             except Exception:
-                pass          # a failed log write must never take down the agent
+                pass
         pending.clear()
         last = time.monotonic()
 
-    def kill():
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        except Exception:
-            pass
-
-    try:
-        assert p.stdout is not None
-        for line in p.stdout:
-            out.append(line)
-            pending.append(line)
-            if (sum(map(len, pending)) >= CHUNK_BYTES
-                    or time.monotonic() - last >= CHUNK_EVERY_S):
-                flush()
-            if time.monotonic() - t0 > timeout_s:
-                kill(); flush()
-                return 124, "".join(out), f"TIMEOUT after {timeout_s}s", time.monotonic() - t0
-        p.wait(timeout=max(1, int(timeout_s - (time.monotonic() - t0))))
-    except subprocess.TimeoutExpired:
-        kill(); flush()
+    def timeout():
+        # The parent may already have exited while a child holds the pipe open.
+        # Its process group is still ours; do not rely on parent liveness here.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(p.pid, sig)
+            except ProcessLookupError:
+                break
+            if sig == signal.SIGTERM:
+                time.sleep(0.2)
+        p.wait()
         return 124, "".join(out), f"TIMEOUT after {timeout_s}s", time.monotonic() - t0
+
+    assert p.stdout is not None
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(p.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = timeout_s - (time.monotonic() - t0)
+                if remaining <= 0:
+                    return timeout()
+                ready = selector.select(min(remaining, CHUNK_EVERY_S))
+                if ready:
+                    raw = os.read(p.stdout.fileno(), CHUNK_BYTES)
+                    text = decoder.decode(raw, final=not raw)
+                    out.append(text); pending.append(text)
+                    if not raw:
+                        break
+                if (sum(map(len, pending)) >= CHUNK_BYTES
+                        or time.monotonic() - last >= CHUNK_EVERY_S):
+                    flush()
+            try:
+                p.wait(timeout=max(0.001, timeout_s - (time.monotonic() - t0)))
+            except subprocess.TimeoutExpired:
+                return timeout()
+        return p.returncode, "".join(out), "", time.monotonic() - t0
     finally:
         flush()
-    return p.returncode, "".join(out), "", time.monotonic() - t0
+        p.stdout.close()

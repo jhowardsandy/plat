@@ -39,6 +39,8 @@ VIEWS = ["v_live_lots", "v_plat_summary", "v_decision_tree",
          "v_delivered_plats", "v_reviews"]
 
 ADDITIVE = [
+    "ALTER TABLE criteria ADD COLUMN IF NOT EXISTS scope varchar(8) DEFAULT 'lot' NOT NULL",
+    "ALTER TABLE criteria ADD COLUMN IF NOT EXISTS verify_in varchar(64)",
     "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS cost_estimated boolean DEFAULT false",
     "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS permission_denials integer DEFAULT 0",
     "ALTER TABLE lots ADD COLUMN IF NOT EXISTS base_ref varchar(64)",

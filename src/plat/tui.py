@@ -14,7 +14,8 @@ from sqlalchemy import text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Footer, Header, RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from . import db as DB
 
@@ -28,6 +29,26 @@ def _hms(td) -> str:
         return "—"
     s = int(td.total_seconds())
     return f"{s // 60:02d}:{s % 60:02d}" if s < 3600 else f"{s // 3600}h{(s % 3600) // 60:02d}"
+
+
+class ReopenReason(ModalScreen):
+    DEFAULT_CSS = """
+    ReopenReason { align: center middle; }
+    ReopenReason Vertical { width: 70; height: auto; padding: 1 2; background: $surface; }
+    """
+    BINDINGS = [("escape", "cancel", "cancel")]
+
+    def compose(self):
+        with Vertical():
+            yield Static("Answer the blocker or record why this work can restart.")
+            yield Input(placeholder="Reason (Enter to reopen; Escape to cancel)")
+
+    def on_input_submitted(self, event: Input.Submitted):
+        if event.value.strip():
+            self.dismiss(event.value.strip())
+
+    def action_cancel(self):
+        self.dismiss(None)
 
 
 class PlatTop(App):
@@ -243,6 +264,9 @@ class PlatTop(App):
             lot = s.get(Lot, self.sel)
             p = s.get(Plat, lot.plat_id)
             was = p.status
+            if was not in ("planned", "running", "paused", "blocked"):
+                self.notify(f"{p.anchor} is {was}; it cannot be paused", severity="warning")
+                return
             new = "running" if was == "paused" else "paused"
             record(s, plat_id=p.id, actor="human", actor_detail="plat top",
                    kind="override", decision=f"{new} ({was} -> {new})",
@@ -253,29 +277,28 @@ class PlatTop(App):
     def action_reopen(self) -> None:
         """Put a BLOCKED lot back into play. Refuses silently on anything else —
         reopening a running lot would race the process that owns it."""
-        from .decisions import record
-        from .models import Lot
+        from .models import Lot, Plat
+        from .runner import reopen_lot
         if self.sel is None:
             return
+        lot_id = self.sel
         with DB.session() as s:
-            lot = s.get(Lot, self.sel)
+            lot = s.get(Lot, lot_id)
             if lot.state != "BLOCKED":
-                msg = (f"[o] {lot.key} is {lot.state}, not BLOCKED — reopen only "
-                       f"applies to a lot that stopped for a human. Reopening a "
-                       f"running lot would race the process that owns it.")
-                self.notify(msg, severity="warning")
-                self.query_one("#logs", RichLog).write(msg)
+                self.notify(f"{lot.key} is {lot.state}; select a blocked lot", severity="warning")
                 return
-            record(s, plat_id=lot.plat_id, lot_id=lot.id, actor="human",
-                   actor_detail="plat top", kind="override",
-                   decision="reopened BLOCKED -> CODING",
-                   rationale="reopened from the monitor; no reason recorded — "
-                             "use `plat reopen --note` when the reason matters",
-                   alternatives=["leave blocked"], inputs={"was": "BLOCKED"},
-                   apply=lambda: setattr(lot, "state", "CODING"))
-            msg = f"[o] {lot.key} reopened to CODING — `plat start` to continue"
-            self.notify(msg)
-            self.query_one("#logs", RichLog).write(msg)
+
+        def answer(note):
+            if not note:
+                return
+            try:
+                with DB.session() as s:
+                    lot = s.get(Lot, lot_id)
+                    reopen_lot(s, s.get(Plat, lot.plat_id), lot, note)
+                self.notify("Reopened — plat start launches a fresh coding attempt")
+            except ValueError as exc:
+                self.notify(str(exc), severity="warning")
+        self.push_screen(ReopenReason(), answer)
 
 
 def run(anchor: str | None = None, all_: bool = False) -> None:
