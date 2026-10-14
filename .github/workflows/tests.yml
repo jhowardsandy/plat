@@ -54,7 +54,9 @@ jobs:
         run: uv run ruff check src tests
 
       - name: schema and views
-        run: uv run plat init
+        run: |
+          uv run plat init
+          uv run plat demo
 
       - name: tests
         run: uv run pytest -q --durations=5
@@ -64,7 +66,11 @@ jobs:
       # the installed tool once shipped `plat top` broken with 69 tests passing.
       - name: the installed binary actually runs
         run: |
-          uv tool install --editable .
+          uv build --wheel
+          uv tool install dist/*.whl
           plat --help > /dev/null
           plat top --help > /dev/null
           plat review --help > /dev/null
+          plat workflow --help > /dev/null
+          plat team join --help > /dev/null
+          plat sessions --help > /dev/null

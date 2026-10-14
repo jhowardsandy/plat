@@ -4,9 +4,11 @@ decide() -> act -> ingest -> decide(). No LLM is ever asked what to do next.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import subprocess
 import threading
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +22,7 @@ from .adapters import base
 from .config import Config
 from .decisions import record
 from .fsm import LotState
-from .models import Attempt, Criterion, Finding, LogChunk, Lot, Plat, Transcript, Verdict
+from .models import Attempt, Criterion, Finding, LogChunk, Lot, Plat, Verdict
 from .models import Session as SessionRow
 
 
@@ -54,7 +56,8 @@ def progress_history(db, lot) -> tuple[float, ...]:
     """Every probe reading so far, oldest first. This is what steers a converge
     lot -- both the prompt and the stop condition read it."""
     rows = db.execute(select(Verdict.raw).join(Attempt, Attempt.id == Verdict.attempt_id)
-                      .where(Attempt.lot_id == lot.id, Attempt.phase == "gate")
+                      .where(Attempt.lot_id == lot.id, Attempt.phase == "gate",
+                             Attempt.n > int((lot.config or {}).get("attempt_start", 0)))
                       .order_by(Attempt.id)).all()
     out = [r[0].get("progress") for r in rows]
     return tuple(float(x) for x in out if x is not None)
@@ -74,6 +77,9 @@ def live_agent(db, lot) -> Attempt | None:
         .order_by(Attempt.id.desc())).first()
     if a is None:
         return None
+    from .ownership import host_id
+    if a.host_id and a.host_id != host_id():
+        return a  # a remote PID is opaque, never inspect or clear it locally
     if base.process_alive(a.pid, (a.role_binding or {}).get("cmd", ""),
                           since=a.started_at):
         return a
@@ -149,27 +155,46 @@ def ordered_lots(lots) -> list:
     return out
 
 
+def lot_criteria(db, plat, lot):
+    return db.scalars(select(Criterion).where(
+        Criterion.plat_id == plat.id, Criterion.scope == "lot",
+        (Criterion.lot_key == lot.key) | Criterion.lot_key.is_(None)
+    ).order_by(Criterion.id)).all()
+
+
 def build_ctx(db, plat, lot) -> fsm.Ctx:
     cfg_l = lot.config or {}
     gate_a = _latest(db, lot, phases=["gate"])
     agent_a = _latest(db, lot, exclude=["gate"])
     prev = db.scalars(
         select(Finding).join(Attempt).where(
-            Attempt.lot_id == lot.id, Attempt.n < lot.attempt)).all()
+            Attempt.lot_id == lot.id, Attempt.n < lot.attempt,
+            Attempt.n > int(cfg_l.get("attempt_start", 0)))).all()
     pending = deps_pending(db, plat, lot)
+    criteria = lot_criteria(db, plat, lot)
+    gate = _verdict_of(db, gate_a) if gate_a and gate_a.n == lot.attempt else None
+    if gate is not None:
+        required = {c.ac_id for c in criteria if c.verify_cmd}
+        checks = gate.get("criteria_check", [])
+        if {c.get("id") for c in checks} != required or len(checks) != len(required):
+            gate = {**gate, "exit_code": 1, "error": "independent criterion evidence is incomplete"}
+    offset = int(cfg_l.get("attempt_start", 0))
     return fsm.Ctx(
         deps_met=not pending,
         deps_pending=pending,
         phases=frozenset((lot.config or {}).get("phases") or ["code", "review"]),
         verdict=_verdict_of(db, agent_a),
-        gate=_verdict_of(db, gate_a),
+        gate=gate,
+        expected_criteria=tuple(c.ac_id for c in criteria),
+        attempt_start=offset,
+        max_attempts=offset + int(cfg_l.get("max_attempts", fsm.MAX_ATTEMPTS)),
         prev_fingerprints=frozenset(f.fingerprint for f in prev),
         heartbeat_at=lot.heartbeat_at,
         mode=fsm.Mode(cfg_l.get("mode", "attempt")),
         objective=cfg_l.get("objective"),
         progress=progress_history(db, lot),
         patience=int(cfg_l.get("patience", fsm.PATIENCE)),
-        max_iterations=int(cfg_l.get("max_iterations", fsm.MAX_ITERATIONS)),
+        max_iterations=offset + int(cfg_l.get("max_iterations", fsm.MAX_ITERATIONS)),
         budget_exhausted=(plat.budget_usd > 0 and spent(db, plat) >= plat.budget_usd),
         paused=(plat.status == "paused"),
     )
@@ -182,9 +207,24 @@ def _out_dir(cfg: Config, plat, lot, phase, n) -> Path:
     return d
 
 
-def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
+def run_lot(db, cfg, plat, lot, roles_cfg, log=print):
+    from .lifecycle import require_accepted
+    from .ownership import execution
+    require_accepted(db, plat)
+    if live_agent(db, lot):
+        log("  an agent from a previous session is still running; no new claim taken")
+        return lot.state
+    with execution(db, cfg, plat, lot):
+        return _run_lot(db, cfg, plat, lot, roles_cfg, log)
+
+
+def _run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
             log=print) -> str:
     parent = None
+    from .spec import IMPLEMENTED_PHASES
+    phases = (lot.config or {}).get("phases", ["code", "review"])
+    if "code" not in phases or set(phases) - IMPLEMENTED_PHASES:
+        raise Halt("unsupported phases; use code, review, docs, and quality")
     live = live_agent(db, lot)
     if live is not None:
         started = live.started_at
@@ -195,7 +235,33 @@ def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
             f"{age / 60:.0f}m in")
         log(f"    let it finish, or: plat abort {plat.anchor} {lot.key}")
         return lot.state
+    criteria = lot_criteria(db, plat, lot)
+    if not criteria or ("review" not in phases and any(not c.verify_cmd for c in criteria)):
+        record(db, plat_id=plat.id, lot_id=lot.id, actor="system", actor_detail="runner.preflight",
+               kind="transition", decision="BLOCKED - incomplete criterion verification configuration",
+               rationale="each lot needs owned criteria; without review every criterion needs verify",
+               inputs={}, apply=lambda: setattr(lot, "state", "BLOCKED"))
+        db.commit()
+        return lot.state
+    unfinished = db.scalars(select(Attempt).where(
+        Attempt.lot_id == lot.id, Attempt.finished_at.is_(None))).all()
+    if unfinished:
+        def interrupted():
+            lot.state = LotState.BLOCKED.value
+            for a in unfinished:
+                a.finished_at = datetime.now(timezone.utc)
+                a.exit_code = -1
+                a.pid = None
+        record(db, plat_id=plat.id, lot_id=lot.id, actor="system",
+               actor_detail="runner.recover", kind="transition",
+               decision="BLOCKED - interrupted attempt needs reconciliation",
+               rationale="the supervisor did not record completion; inspect preserved artifacts and reopen with a reason",
+               inputs={"attempts": [a.id for a in unfinished]}, apply=interrupted)
+        db.commit()
+        log("  interrupted attempt: inspect the worktree, then plat reopen --note '...' ")
+        return lot.state
     while True:
+        db.refresh(lot)
         db.refresh(plat)          # pause may have been set from another process
         ctx = build_ctx(db, plat, lot)
         nxt = fsm.decide(LotState(lot.state), lot.attempt, ctx)
@@ -231,81 +297,187 @@ def run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
         parent = _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log)
 
 
+def reopen_lot(db, plat, lot, note: str):
+    """Restart deliberately, invalidating dependent work and old delivery claims."""
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    db.refresh(lot)
+    if not note.strip():
+        raise ValueError("a recovery decision or answer is required")
+    if plat.closed_at is not None:
+        raise ValueError("shipped work is immutable; use a new plat")
+    if lot.state not in ("BLOCKED", "ABORTED", "DONE"):
+        raise ValueError(f"{lot.key} is {lot.state}; only stopped or completed work can be reopened")
+    lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id).order_by(Lot.id)
+                      .with_for_update().execution_options(populate_existing=True)).all()
+    affected = {lot.key}
+    while True:
+        more = {l.key for l in lots if affected.intersection(l.depends_on or [])}
+        if more <= affected:
+            break
+        affected |= more
+    targets = [l for l in lots if l.key in affected]
+    for target in targets:
+        from .models import ExecutionClaim
+        claim = db.get(ExecutionClaim, target.id)
+        if claim and claim.active:
+            raise ValueError(f"{target.key} has an active execution claim; reconcile it first")
+        if target.state not in ("BLOCKED", "ABORTED", "DONE", "PENDING") or live_agent(db, target):
+            raise ValueError(f"{target.key} may still be executing; stop it before reopening its dependency")
+    for target in targets:
+        was = target.state
+        unfinished = db.scalars(select(Attempt).where(
+            Attempt.lot_id == target.id, Attempt.finished_at.is_(None))).all()
+        def apply(target=target, unfinished=unfinished):
+            for attempt in unfinished:
+                attempt.finished_at = datetime.now(timezone.utc)
+                attempt.exit_code, attempt.pid = -1, None
+            for criterion in lot_criteria(db, plat, target):
+                criterion.met_in_attempt_id = None
+            target.state = "PENDING"
+            target.human_note = (target.human_note + "\n\nReopen: " + note) if target.human_note else note
+            target.config = {**(target.config or {}), "attempt_start": target.attempt}
+            plat.status = "planned"
+            plat.delivered_at = None
+            from .models import Workflow
+            workflow = db.get(Workflow, plat.id)
+            if workflow:
+                workflow.stage = "development"
+                workflow.version += 1
+        record(db, plat_id=plat.id, lot_id=target.id, actor="human", actor_detail="reopen",
+               kind="override", decision=f"reopened {was} -> PENDING",
+               rationale=note, inputs={"was": was, "upstream": lot.key},
+               alternatives=["leave stopped"], apply=apply)
+
+
 def _ask(db, lot) -> str | None:
     """The reviewer's question, if it raised one — that is what you need to read."""
-    a = _latest(db, lot, phases=["review", "quality"])
+    a = _latest(db, lot, exclude=["gate"])
     v = _verdict_of(db, a) or {}
-    return v.get("blocking_question")
+    return v.get("blocking_question") or "; ".join(v.get("open_questions") or []) or v.get("summary")
 
 
 def maybe_deliver_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
-    """Mark a plat DELIVERED once every lot is terminal.
-
-    Delivered is not closed. Plat has finished its work; the branch is unpushed,
-    unreviewed and unmerged, and a human owns it from here. Calling that "closed"
-    made three finished plats read as shipped when not one of them had merged --
-    the ledger was lying, which is worse than the ledger being empty.
-
-    `plat close` is how a human says it actually shipped. v1 inserts closing the
-    traverse, recording and sign-off ahead of delivery.
-    """
+    """Only fully completed, independently verified work can be delivered."""
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
     lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id)).all()
-    if not lots or any(l.state not in (LotState.DONE.value, LotState.ABORTED.value)
-                       for l in lots):
+    if not lots or plat.status in ("closed", "aborted", "paused"):
+        return False
+    if any(l.state not in (LotState.DONE.value, LotState.ABORTED.value) for l in lots):
+        return False
+    if any(l.state == LotState.ABORTED.value for l in lots):
+        if plat.status != "incomplete":
+            record(db, plat_id=plat.id, actor="system", actor_detail="fsm.deliver_plat",
+                   kind="transition", decision="plat INCOMPLETE - required lots aborted",
+                   inputs={"aborted": [l.key for l in lots if l.state == "ABORTED"]},
+                   apply=lambda: (setattr(plat, "status", "incomplete"),
+                                  setattr(plat, "delivered_at", None)))
+            db.commit()
         return False
     if plat.delivered_at is not None:
         return False
-    done = sum(1 for l in lots if l.state == LotState.DONE.value)
+    run_criteria = db.scalars(select(Criterion).where(
+        Criterion.plat_id == plat.id, Criterion.scope == "run")).all()
+    checks = []
+    for criterion in run_criteria:
+        target = next((l for l in lots if l.key == criterion.verify_in), None)
+        if target is None or not criterion.verify_cmd:
+            checks.append({"id": criterion.ac_id, "met": False,
+                           "error": "run criterion needs verify and a valid verify_in worktree"})
+        else:
+            from .config import load
+            from .lifecycle import execute_command
+            from .ownership import OwnershipError, execution
+            try:
+                with execution(db, cfg or load(), plat, target):
+                    with _Heartbeat(target.id):
+                        rc, output = execute_command(db, cfg or load(), plat, target,
+                                                     "run_check", criterion.verify_cmd)
+                    checks.append({"id": criterion.ac_id, "cmd": criterion.verify_cmd,
+                                   "met": rc == 0, "exit_code": rc, "output_tail": output[-1500:]})
+            except OwnershipError as exc:
+                log(f"  run criterion {criterion.ac_id} waits for its owning executor: {exc}")
+                return False
+    # Checks commit their own attempts and release claims. Re-read under locks:
+    # cancellation or reopening may have happened while a command was running.
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id).with_for_update()
+                      .execution_options(populate_existing=True)).all()
+    if (plat.status in ("closed", "aborted", "paused") or plat.delivered_at is not None
+            or any(l.state != LotState.DONE.value for l in lots)):
+        return False
+    failed = any(c["met"] is not True for c in checks)
+    def finish():
+        if failed:
+            plat.status = "blocked"
+        else:
+            plat.status = "delivered"
+        plat.delivered_at = None if failed else datetime.now(timezone.utc)
     record(db, plat_id=plat.id, actor="system", actor_detail="fsm.deliver_plat",
            kind="transition",
-           decision=f"plat DELIVERED - {done}/{len(lots)} lots DONE",
-           rationale="every lot is terminal, so Plat's work is finished. Nothing is "
-                     "pushed, reviewed or merged -- that is a human's, and `plat "
-                     "close` is how they say it shipped.",
-           inputs={"lots": len(lots), "done": done,
-                   "spent_usd": round(spent(db, plat), 2)})
-    plat.status = "delivered"
-    plat.delivered_at = datetime.now(timezone.utc)
+           decision="plat BLOCKED - run criteria failed" if failed else "plat DELIVERED - all lots DONE",
+           rationale="delivery records local verified completion; deployment and shipment are separate",
+           inputs={"lots": len(lots), "criteria_check": checks,
+                   "spent_usd": round(spent(db, plat), 2)}, apply=finish)
     db.commit()
-    log(f"  [bold green]plat delivered[/bold green] ({done}/{len(lots)} lots) "
-        f"[dim]— review it, then `plat close {plat.anchor}`[/dim]")
+    log("  run criteria failed; see plat show, correct the cause, then plat start" if failed
+        else "  plat delivered — local work complete; record actual shipment with plat close")
     if cfg is not None:
-        notify.send(notify.Event(kind="delivered", anchor=plat.anchor,
-                                 title=f"delivered — {done}/{len(lots)} lots, "
-                                       f"waiting on you",
-                                 detail=f"${spent(db, plat):.2f}"), cfg.notify)
-    return True
+        notify.send(notify.Event(kind="blocked" if failed else "delivered", anchor=plat.anchor,
+                                 title="run criteria failed" if failed else "delivered — awaiting shipment"), cfg.notify)
+    return not failed
 
 
 def _run_gate(db, cfg, plat, lot, parent, log) -> int:
-    lot.state = LotState.GATE.value
-    db.commit()
     wt = Path(lot.worktree_path)
     gcfg = (lot.config or {}).get("gate", {})
     cmd = gcfg.get("test", "true")
     a = Attempt(lot_id=lot.id, phase="gate", n=lot.attempt,
                 provider="supervisor", model="local", role_binding={})
-    db.add(a)
+    from .ownership import current, host_id
+    claim = current.get()
+    a.host_id, a.executor_id = host_id(), cfg.origin_id
+    a.claim_generation = claim[2] if claim else None
+    d = record(db, plat_id=plat.id, lot_id=lot.id, parent_id=parent,
+               actor="system", actor_detail="gates.start", kind="transition",
+               decision="verifying independently", inputs={"cmd": cmd},
+               apply=lambda: (setattr(lot, "state", LotState.GATE.value), db.add(a)))
+    parent = d.id
     db.commit()          # visible to the monitor NOW, not when the gate finishes
     log(f"  gate: {cmd}")   # the command is ours; its OUTPUT never goes through log()
-    g = gates.run(wt, cmd, lot.base_ref, probe_cmd=gcfg.get("probe"),
-                  baseline_passed=int(gcfg.get("baseline_passed", 0)))
+    def gate_pid(pid, command):
+        from .db import session as _s
+        with _s() as telemetry:
+            telemetry.execute(update(Attempt).where(Attempt.id == a.id)
+                              .values(pid=pid, role_binding={"cmd": command}))
+    with _Heartbeat(lot.id):
+        g = gates.run(wt, cmd, lot.base_ref, probe_cmd=gcfg.get("probe"),
+                      baseline_passed=int(gcfg.get("baseline_passed", 0)), on_pid=gate_pid)
+        db.refresh(lot)
+        checks = ([] if lot.state == "ABORTED" else
+                  gates.verify(wt, lot_criteria(db, plat, lot), on_pid=gate_pid))
+    db.refresh(a)
     a.exit_code = g.exit_code
     a.finished_at = datetime.now(timezone.utc)
     a.pid = None             # finished: nothing to find alive, nothing to abort
-    db.add(Verdict(attempt_id=a.id, raw=g.as_dict(),
+    evidence = {**g.as_dict(), "criteria_check": checks,
+                "diff_required": (lot.config or {}).get("kind") != "investigation"}
+    db.add(Verdict(attempt_id=a.id, raw=evidence,
                    tests_passed=g.tests_passed, tests_failed=g.tests_failed))
-    ok = g.tests_failed == 0 and g.diff_files > 0
+    ok = fsm.gate_passed(evidence)
+    failed_criteria = sum(c["met"] is not True for c in evidence["criteria_check"])
     prog = f" · probe {g.progress}" if g.progress is not None else ""
     if g.progress is not None:
         log(f"  probe: {g.progress}")
     d = record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
                actor="system", actor_detail="gates.run", kind="transition",
                decision=(("gate passed - %d files, 0 failing" % g.diff_files) if ok
-                         else ("gate FAILED - %d failing, %d files changed"
-                               % (g.tests_failed, g.diff_files))) + prog,
+                         else (f"gate FAILED - exit {g.exit_code}, {failed_criteria} criterion check(s) failed, "
+                               f"{g.diff_files} files changed")) + prog,
                rationale="the supervisor ran the tests; the agent's claim is not consulted",
-               inputs=g.as_dict())
+               inputs=evidence)
     db.commit()
     return d.id
 
@@ -320,6 +492,8 @@ class _Heartbeat:
     """
 
     def __init__(self, lot_id: int, every: float = 15.0):
+        from .ownership import current
+        self.claim = current.get()
         self.lot_id, self.every = lot_id, every
         self._stop = threading.Event()
         self._t: threading.Thread | None = None
@@ -329,8 +503,15 @@ class _Heartbeat:
         while not self._stop.wait(self.every):
             try:
                 with _s() as s2:
+                    if self.claim:
+                        from .ownership import renew
+                        renew(s2, self.claim)
                     s2.execute(update(Lot).where(Lot.id == self.lot_id)
                                .values(heartbeat_at=datetime.now(timezone.utc)))
+                    from .models import TrackedSession
+                    s2.execute(update(TrackedSession).where(TrackedSession.lot_id == self.lot_id,
+                               TrackedSession.source == 'launched', TrackedSession.state == 'active')
+                               .values(last_activity=datetime.now(timezone.utc)))
             except Exception:
                 pass          # a missed beat must never take down the lot
 
@@ -346,70 +527,123 @@ class _Heartbeat:
 
 
 def _worktree_fingerprint(wt: Path) -> str:
-    """HEAD plus dirty state. A reviewer that changes either has overstepped."""
-    def g(*a):
-        return subprocess.run(["git", *a], cwd=str(wt), capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL).stdout
-    return g("rev-parse", "HEAD").strip() + "|" + g("status", "--porcelain")
+    """Hash HEAD, index/worktree diffs, and untracked file contents."""
+    digest = hashlib.sha256()
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=wt, capture_output=True,
+                              stdin=subprocess.DEVNULL, check=True).stdout
+    for data in (git("rev-parse", "HEAD"), git("diff", "--binary", "HEAD", "--"),
+                 git("diff", "--cached", "--binary", "--"), git("status", "--porcelain")):
+        digest.update(data)
+    for raw in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
+        if raw:
+            path = wt / raw.decode()
+            digest.update(raw)
+            digest.update(str(path.readlink()).encode() if path.is_symlink() else path.read_bytes())
+    return digest.hexdigest()
 
 
-def _prior_session(db, lot) -> str | None:
+def _prior_session(db, lot, provider: str, cfg=None) -> str | None:
     a = db.scalars(select(Attempt).where(Attempt.lot_id == lot.id,
                                          Attempt.phase == "code")
                    .order_by(Attempt.id.desc())).first()
-    if not a:
+    if not a or a.provider != provider:
         return None
-    s = db.scalars(select(SessionRow).where(SessionRow.attempt_id == a.id)).first()
+    if cfg is not None:
+        from .ownership import host_id
+        if a.executor_id != cfg.origin_id or a.host_id != host_id():
+            return None
+    s = db.scalars(select(SessionRow).where(SessionRow.attempt_id == a.id,
+                                           SessionRow.provider == provider)).first()
     return s.provider_session_id if s else None
 
 
-def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
-    lot.state = nxt.state.value
-    lot.attempt = nxt.attempt or lot.attempt or 1
-    lot.heartbeat_at = datetime.now(timezone.utc)
-    db.commit()
-
-    sid = _prior_session(db, lot) if nxt.resume_session else None
-    role = R.bind(roles_cfg, nxt.role, lot.attempt, session_id=sid)
-    out = _out_dir(cfg, plat, lot, nxt.phase, lot.attempt)
+def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) -> int:
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
+    db.refresh(lot)
+    if plat.status in ("paused", "aborted", "closed") or lot.state == "ABORTED":
+        raise Halt("execution was paused or stopped before dispatch")
+    role_attempt = (nxt.attempt or 1) - int((lot.config or {}).get("attempt_start", 0))
+    role = R.bind(roles_cfg, nxt.role, role_attempt)
+    sid = _prior_session(db, lot, role.provider, cfg) if nxt.resume_session else None
+    role = R.bind(roles_cfg, nxt.role, role_attempt, session_id=sid)
+    lot_attempt = nxt.attempt or lot.attempt or 1
+    out = out_dir or _out_dir(cfg, plat, lot, nxt.phase, lot_attempt)
+    out.mkdir(parents=True, exist_ok=True)
     wt = Path(lot.worktree_path)
-    crit = db.scalars(select(Criterion).where(Criterion.plat_id == plat.id)).all()
+    crit = lot_criteria(db, plat, lot)
     cfgl = lot.config or {}
 
     if nxt.phase == "code":
         findings = db.scalars(
             select(Finding).join(Attempt).where(
-                Attempt.lot_id == lot.id, Attempt.n == lot.attempt - 1)).all()
+                Attempt.lot_id == lot.id, Attempt.n == lot_attempt - 1)).all()
         prompt = P.build_code(lot, plat, wt, cfgl.get("branch", ""), lot.base_ref or "HEAD",
                               cfgl.get("plat_map", ""), cfgl.get("plan", ""), crit,
                               findings, cfgl.get("gate", {}).get("test", "true"), out,
-                              upstream=upstream_handoff(db, plat, lot))
+                              upstream=upstream_handoff(db, plat, lot), attempt=lot_attempt)
         if cfgl.get("mode") == "converge":
             prompt = prompt.replace(
                 "## Rules",
                 P.converge_block(cfgl.get("objective", ""), progress_history(db, lot),
                                  cfgl.get("gate", {}).get("probe", ""),
-                                 lot.attempt, int(cfgl.get("max_iterations",
+                                 role_attempt, int(cfgl.get("max_iterations",
                                                            fsm.MAX_ITERATIONS)))
                 + "## Rules", 1)
     else:
+        from .review import prior_art
         gate_a = _latest(db, lot, phases=["gate"])
         prompt = P.build_review(lot, plat, wt, lot.base_ref or "HEAD",
                                 cfgl.get("plan", ""), crit,
-                                _verdict_of(db, gate_a) or {}, out,
+                                _verdict_of(db, gate_a) or {}, out, prior=prior_art(db, lot.repo),
                                 upstream=upstream_handoff(db, plat, lot))
+    if cfgl.get("kind") == "investigation":
+        if nxt.phase == "code":
+            prompt = P.build_investigation(lot, plat, wt, crit, cfgl.get("plan", ""), out)
+        else:
+            from .models import Artifact
+            evidence = db.scalars(select(Artifact).join(Attempt, Attempt.id == Artifact.attempt_id)
+                .where(Attempt.lot_id == lot.id, Attempt.phase == "code", Artifact.name == "code.md")
+                .order_by(Artifact.id.desc())).first()
+            prompt += "\nThis is an evidence-only investigation; no repository diff is required.\n"
+            if evidence:
+                prompt += "\n## Investigation evidence\n" + evidence.body
+    if nxt.phase in ("docs", "quality"):
+        prompt = P.build_support(nxt.phase, lot, plat, wt, crit,
+                                 _verdict_of(db, _latest(db, lot, phases=["gate"])) or {}, out)
+    if lot.human_note:
+        prompt += "\n## Human decision for this attempt\n\n" + lot.human_note + "\n"
+    if nxt.phase == "code":
+        previous_gate = _verdict_of(db, _latest(db, lot, phases=["gate"]))
+        if previous_gate:
+            prompt += "\n## Previous supervisor gate evidence\n\n" + str(previous_gate) + "\n"
     pf = out / "prompt.md"
     pf.write_text(prompt)
 
-    a = Attempt(lot_id=lot.id, phase=nxt.phase, n=lot.attempt,
+    a = Attempt(lot_id=lot.id, phase=nxt.phase, n=lot_attempt,
                 provider=role.provider, model=role.model,
-                role_binding={"role": role.name, "resumed": bool(sid)})
-    db.add(a)
+                role_binding={**asdict(role), "role": role.name, "resumed": bool(role.session_id)})
+    from .ownership import current, host_id
+    claim = current.get()
+    a.host_id, a.executor_id = host_id(), cfg.origin_id
+    a.claim_generation = claim[2] if claim else None
+    d = record(db, plat_id=plat.id, lot_id=lot.id, parent_id=parent,
+               actor="system", actor_detail="runner.dispatch", kind="transition",
+               decision=f"{nxt.phase} attempt {lot_attempt}", rationale=nxt.reason,
+               inputs={"provider": role.provider, "model": role.model, "effort": role.effort},
+               apply=lambda: (setattr(lot, "state", nxt.state.value),
+                              setattr(lot, "attempt", lot_attempt),
+                              setattr(lot, "heartbeat_at", datetime.now(timezone.utc)), db.add(a)))
+    parent = d.id
+    from . import sessions
+    sessions.launched(db, cfg, plat, lot, a)
     db.commit()          # an in-flight attempt must be visible while it is in flight
-    note = " (resuming session)" if sid else ""
+    note = " (resuming session)" if role.session_id else ""
     log(f"  {nxt.phase}: {role.provider}/{role.model}{note} ...")
 
-    before = _worktree_fingerprint(wt) if nxt.phase != "code" else None
+    before = _worktree_fingerprint(wt) if nxt.phase != "code" or cfgl.get("kind") == "investigation" else None
     seq = itertools.count()
     residue = [""]          # a chunk can end mid-line; the tail belongs to the next
 
@@ -445,8 +679,22 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
         except Exception:
             pass
 
-    with _Heartbeat(lot.id):
-        res = adapters.run(role, pf, wt, on_chunk=_chunk, on_pid=_pid)
+    try:
+        with _Heartbeat(lot.id):
+            res = adapters.run(role, pf, wt, on_chunk=_chunk, on_pid=_pid)
+    except Exception as exc:
+        res = base.AgentResult(ok=False, exit_code=-1, duration_s=0,
+                               provider=role.provider, error=str(exc))
+    _chunk("\n")  # flush the last unterminated provider event
+    # PID and abort updates were committed by other sessions. Refresh before
+    # clearing: assigning None to a cached None would leave the real PID behind.
+    db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
+    db.refresh(a)
+    db.refresh(lot)
+    sessions.complete(db, a, res)
+    from .lifecycle import local_revision
+    lot.config = {**(lot.config or {}), 'observed_revision': local_revision(lot),
+                  'observed_at': datetime.now(timezone.utc).isoformat()}
     a.exit_code = res.exit_code
     a.cost_usd = res.cost_usd
     a.cost_estimated = res.cost_estimated
@@ -455,45 +703,53 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
     a.finished_at = datetime.now(timezone.utc)
     a.pid = None             # finished: nothing to find alive, nothing to abort
     lot.heartbeat_at = datetime.now(timezone.utc)
-    db.refresh(lot)          # the heartbeat thread moved it underneath us
     log(f"    exit={res.exit_code} {res.duration_s:.0f}s "
         f"${res.cost_usd:.2f}{'~' if res.cost_estimated else ''}")
 
-    if before is not None and _worktree_fingerprint(wt) != before:
+    # In-flight cancellation is authoritative even if the subprocess reports success.
+    if lot.state == LotState.ABORTED.value:
+        ingest.evidence(db, plat=plat, attempt=a, result=res, out_dir=out)
+        record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
+               actor="system", actor_detail="runner.cancelled", kind="transition",
+               decision="attempt stopped after abort", inputs={"exit_code": res.exit_code})
+        db.commit()
+        raise Halt("attempt was aborted")
+    failure = None
+    if not res.ok or res.exit_code != 0 or res.permission_denials:
+        failure = (res.error or f"provider exit {res.exit_code}") + (
+            f"; {len(res.permission_denials)} permission denial(s)" if res.permission_denials else "")
+    elif before is not None and _worktree_fingerprint(wt) != before:
+        failure = f"{nxt.phase} agent MODIFIED the worktree"
+    try:
+        if failure:
+            raise ingest.ContractError(failure)
+        verdict = ingest.load_verdict(out, nxt.phase)
+        if not (out / f"{nxt.phase}.md").is_file():
+            raise ingest.ContractError(f"{nxt.phase}.md narrative was never written")
+        check_key = "acceptance_criteria" if nxt.phase == "code" else "criteria_check"
+        ids = [c["id"] for c in verdict.get(check_key, [])]
+        expected = [c.ac_id for c in crit]
+        # A blocked coder may not yet be able to assess the criteria at all.
+        blocked = nxt.phase == "code" and (verdict.get("needs_human") or verdict.get("status") == "blocked")
+        if not blocked and (len(ids) != len(expected) or set(ids) != set(expected)):
+            raise ingest.ContractError(f"criterion IDs must match declared scope: {expected}; received {ids}")
+        if nxt.phase in ("review", "quality", "docs") and verdict.get("verdict") == "pass" and verdict.get("findings"):
+            raise ingest.ContractError("a passing review cannot contain unresolved findings")
+        if nxt.phase == "code" and verdict.get("lot") != lot.key:
+            raise ingest.ContractError("code verdict names a different lot")
+    except ingest.ContractError as exc:
+        ingest.evidence(db, plat=plat, attempt=a, result=res, out_dir=out)
         record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
                actor="system", actor_detail="runner.verify", kind="transition",
-               decision=f"{nxt.phase} agent MODIFIED the worktree",
-               rationale="a reviewer must not edit the code it reviews; "
-                         "the verdict is not trustworthy and the diff is contaminated",
-               inputs={"phase": nxt.phase},
-               apply=lambda: setattr(lot, "state", LotState.BLOCKED.value))
-        db.commit()
-        raise Halt(f"{nxt.phase} agent modified the worktree")
-
-    if res.permission_denials:
-        log(f"    !! {len(res.permission_denials)} permission denial(s) - "
-            f"the agent was blocked, not merely unproductive")
-
-    try:
-        verdict = ingest.load_verdict(out, nxt.phase)
-    except ingest.ContractError as e:
-        if res.stdout:
-            db.add(Transcript(attempt_id=a.id, body=res.stdout[:4_000_000]))
-        record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=parent,
-               actor="system", actor_detail="ingest.validate", kind="transition",
-               decision="BLOCKED - termination contract not honoured",
-               rationale=str(e),
+               decision="BLOCKED - execution or termination contract failed", rationale=str(exc),
                inputs={"permission_denials": len(res.permission_denials),
                        "exit_code": res.exit_code, "stderr": res.stderr[-600:]},
                apply=lambda: setattr(lot, "state", LotState.BLOCKED.value))
         db.commit()
-        # This path blocked a lot silently while every other block notified. A
-        # contract failure is usually environmental and always needs a person.
-        notify.send(notify.Event(
-            kind="blocked", anchor=plat.anchor, lot=lot.key, urgent=True,
-            title="termination contract not honoured",
-            detail=str(e)[:300]), cfg.notify)
-        raise Halt(str(e))
+        notify.send(notify.Event(kind="blocked", anchor=plat.anchor, lot=lot.key,
+                                 urgent=True, title="execution or termination contract failed",
+                                 detail=str(exc)[:300]), cfg.notify)
+        raise Halt(str(exc))
 
     if nxt.phase == "code" and not verdict.get("handoff"):
         # Not an error -- plenty of lots have nothing to hand over. But a lot with
@@ -509,5 +765,10 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log) -> int:
 
     last = ingest.persist(db, plat=plat, lot=lot, attempt=a, verdict=verdict,
                           result=res, out_dir=out, parent_decision_id=parent)
+    record(db, plat_id=plat.id, lot_id=lot.id, attempt_id=a.id, parent_id=last or parent,
+           actor="system", actor_detail="runner.complete", kind="transition",
+           decision=f"{nxt.phase} result ingested", inputs={"exit_code": res.exit_code,
+                                                          "status": verdict.get("status"),
+                                                          "verdict": verdict.get("verdict")})
     db.commit()
     return last or parent

@@ -12,12 +12,19 @@ Read `README.md` first for the vocabulary (plat / lot / plat map / closing the t
 
 ## Rules of the codebase
 
-- **`decisions.record()` is the only mutation path.** No bare `UPDATE`. Every change
-  writes a decision row and applies the change in one transaction.
+- **`decisions.record()` is the domain mutation path.** Plan/state/ownership and
+  outcome changes require a decision in the same transaction. Phase evidence is
+  written in that transaction. Only heartbeat timestamps, PIDs and live log chunks
+  may use independent telemetry writes; they cannot change workflow state. Demo
+  seed/clear is fixture maintenance.
 - `views.sql` holds the derived signals (stale, retrying, needs-human). Renderers stay
   thin; never compute a signal in a renderer.
-- `dispatch/` is behind an interface so v0's inline runner and v1's Celery tasks call
-  identical logic. Keep `runner.py` free of dispatch concerns.
+- `dispatch/` owns inline scheduling and host-routed Celery execution. Both call
+  the same claimed runner. Do not bypass ownership fencing or inspect remote PIDs.
+- `lifecycle.py` records acceptance and independently executed delivery checks.
+  Revision drift invalidates readiness. `team.py` never executes client-supplied shell commands.
+- Add schema changes as frozen Alembic revisions under `migrations/versions`.
+  Identity administration is recorded with a null plat scope. Never delete audit history.
 - Findings carry `(origin_id, anchor, repo, fingerprint)` so two installs' corpora can
   be unioned later. Never reference a finding by bare autoincrement id across installs.
 

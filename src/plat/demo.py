@@ -42,6 +42,22 @@ def clear(db) -> int:
     plats = db.scalars(select(Plat).where(Plat.origin_id == ORIGIN)).all()
     n = 0
     for p in plats:
+        from .models import (
+            CollaborationItem,
+            CommandReceipt,
+            ExecutionClaim,
+            StageRecord,
+            TrackedSession,
+            Workflow,
+        )
+        item_ids = list(db.scalars(select(CollaborationItem.public_id).where(CollaborationItem.plat_id == p.id)))
+        if item_ids:
+            db.execute(delete(CommandReceipt).where(CommandReceipt.result["id"].astext.in_(item_ids)))
+        for model in (TrackedSession, CollaborationItem, StageRecord, Workflow):
+            db.execute(delete(model).where(model.plat_id == p.id))
+        lot_ids = select(Lot.id).where(Lot.plat_id == p.id)
+        db.execute(delete(ExecutionClaim).where(ExecutionClaim.lot_id.in_(lot_ids)))
+        db.execute(delete(Artifact).where(Artifact.plat_id == p.id))
         lots = db.scalars(select(Lot).where(Lot.plat_id == p.id)).all()
         for l in lots:
             att = db.scalars(select(Attempt).where(Attempt.lot_id == l.id)).all()

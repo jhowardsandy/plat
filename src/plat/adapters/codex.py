@@ -47,6 +47,7 @@ def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None,
                              role.timeout_s, on_chunk=on_chunk, on_pid=on_pid)
     res = AgentResult(ok=(rc == 0), exit_code=rc, duration_s=dt, stdout=out, stderr=err,
                       cost_estimated=True)
+    completed = False
     for line in out.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -58,12 +59,16 @@ def run(role: Role, prompt_file: Path, cwd: Path, on_chunk=None,
         if d.get("type") == "thread.started":
             res.session_id = d.get("thread_id")
         elif d.get("type") == "turn.completed":
+            completed = True
             u = d.get("usage") or {}
             res.tokens_in += int(u.get("input_tokens", 0))
             res.tokens_out += int(u.get("output_tokens", 0))
         elif d.get("type") == "turn.failed":
             res.ok = False
             res.error = str(d.get("error"))[:400]
+    if not completed and not res.error:
+        res.ok = False
+        res.error = "codex emitted no completed turn"
     rate_in, rate_out = RATES.get(role.model, RATES["_default"])
     res.cost_usd = (res.tokens_in / 1e6) * rate_in + (res.tokens_out / 1e6) * rate_out
     return res

@@ -1,14 +1,13 @@
-"""The ONLY mutation path.
+"""Domain mutations and evidence share a transaction with a recorded decision.
 
-No CLI command and no task writes a bare UPDATE. Every change to a plat goes
-through record(), which writes the decision row and applies the change in ONE
-transaction -- so it is structurally impossible to change a plat without leaving
-a record of who decided, what else was on the table, and what they were looking at.
+Operational heartbeats, PIDs and live logs may be written independently. They
+never authorize a state transition. See CLAUDE.md for this bounded exception.
 """
 from __future__ import annotations
 
 from typing import Any, Callable
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session as DbSession
 
 from .models import Decision, Event
@@ -17,7 +16,7 @@ from .models import Decision, Event
 def record(
     db: DbSession,
     *,
-    plat_id: int,
+    plat_id: int | None,
     actor: str,                      # system | agent | human
     actor_detail: str,               # fsm rule name | provider/model | user
     kind: str,
@@ -31,6 +30,8 @@ def record(
     reversible: bool = True,
     apply: Callable[[], None] | None = None,
 ) -> Decision:
+    from .ownership import fence
+    fence(db)
     if actor == "agent" and not alternatives:
         raise ValueError(
             "an agent decision with no alternatives is not a decision, it is just "
@@ -45,6 +46,9 @@ def record(
     db.add(d)
     if apply is not None:
         apply()
+    db.flush()  # domain row locks precede the short event-ordering lock
+    # Event IDs follow commit order, so cursor replay cannot skip late commits.
+    db.execute(text("SELECT pg_advisory_xact_lock(739217451)"))
     db.add(Event(plat_id=plat_id, lot_id=lot_id, kind=f"decision.{kind}",
                  message=decision, payload={"actor": actor, "detail": actor_detail}))
     db.flush()

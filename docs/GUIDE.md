@@ -20,7 +20,7 @@ Every agent terminates by writing **two** files: `<phase>.md` for humans and the
 
 The tempting alternative — let an orchestrator agent read the review and decide — is an LLM parsing prose to drive control flow. It is non-deterministic, non-resumable and unauditable. You would never be able to answer *"why did it loop four times on Tuesday."*
 
-Invalid or missing JSON is a hard failure with one cheap repair attempt. Never a guess.
+Invalid or missing JSON blocks the lot with the observed output preserved. Inspect the failure and reopen with a recorded reason; there is no automatic repair pass.
 
 ### Never trust self-reported success
 
@@ -73,7 +73,7 @@ Where genuine nuance is needed, a `router` role answers **one** narrow question 
 
 ### Retry, and why attempt 3 differs
 
-Attempt 2 **resumes the coder's own provider session** — it keeps the context for why it made those choices instead of being handed a diff and a list of complaints by a stranger. It is also cheaper, because the prompt cache is warm.
+Attempt 2 **resumes the coder's own provider session** — it keeps the context for why it made those choices instead of being handed a diff and a list of complaints by a stranger. Session reuse is attempted only when the previous code session belongs to the same provider.
 
 Attempt 3 **starts cold**. By then the session is carrying a wrong mental model, and escaping it is the entire reason a third attempt exists.
 
@@ -206,7 +206,7 @@ shape` puts a cheap reconnaissance pass in front of it:
 
 ```
 1  split by repo (2 lots)   2 lots   ~$7.22   ~19 min
-   isolated blast radius and one review each; not faster until lots run in parallel
+   isolated blast radius and one review each; use `--workers` for parallelism
 2  single lot               1 lot    ~$3.61   ~10 min
    cheapest; one agent holds the whole change and one failure loses all of it
 3  spike first              1 lot    ~$0.61    ~1 min
@@ -294,7 +294,7 @@ over. It is there because the alternative is a feature that goes unused for week
 and looks like it is working.
 
 Be sparse with edges even so. A false dependency serialises work for no reason,
-and lots are serial today regardless — an edge buys ordering you can rely on and
+and an edge buys ordering you can rely on and
 a contract that crosses, not speed. A test that exercises the seam is still worth
 more than an edge, because it is checked rather than assumed.
 
@@ -345,7 +345,7 @@ One table, three actors, a tree via `parent_id`, read as narrative:
 
 **System decisions are observed.** The supervisor knows them for certain. **Agent decisions are self-reported** and epistemically weaker — a model asked to record its reasoning will happily produce post-hoc rationalisation. Two mitigations: `alternatives` is mandatory and non-empty (if nothing else was on the table it was not a decision, it was just doing the work), and the two are rendered differently everywhere.
 
-`record()` is the **only** mutation path. No command writes a bare `UPDATE`; every change writes a decision and applies the change in one transaction, so it is structurally impossible to change a plat without leaving a record.
+`record()` is the domain mutation boundary: plan acceptance/revision, dispatch, phase outcomes, human answers, tracker observations and lifecycle transitions have a decision in the same transaction. Evidence rows are part of that outcome transaction. Heartbeat timestamps, process IDs and batched live log chunks are operational telemetry and may write independently; they cannot decide workflow state. Demo seed/clear is fixture maintenance.
 
 ## 8. Watching it
 
@@ -398,7 +398,8 @@ A plat has two endings and they mean different things:
 
 | | set by | means |
 |---|---|---|
-| `delivered` | the supervisor | every lot is terminal. **Nothing is pushed, reviewed or merged.** |
+| `delivered` | the supervisor | every lot is DONE and run criteria passed; shipment remains a separate fact |
+| `incomplete` | the supervisor | terminal work includes an aborted required lot; it cannot be closed as shipped |
 | `closed` | you, via `plat close` | it actually shipped |
 
 Conflating them is not a cosmetic problem. Three finished plats read as `closed`
@@ -415,8 +416,9 @@ $ plat history --awaiting
 ```
 
 A delivered plat leaves the live board, because it is not in flight, and keeps a
-row in history, because it is waiting on a person. `plat close` records the
-closing as **your** decision, marked irreversible, with whatever reason you give.
+row in history, because it is waiting on a person. `plat close --note "..."` records the
+closing as **your** decision, marked irreversible. It requires fully delivered
+work and a nonempty description of where/what shipped.
 
 ### What the ticket says
 
@@ -508,20 +510,25 @@ a desktop notifier armed and no mention of it makes "why did that happen" a
 question the file cannot answer. `plat init` now backfills those settings, with
 the paragraphs explaining them, and touches nothing already there.
 
-Phase **order** is deliberately not configurable. `code → review → docs → quality`
-is semantic rather than a preference: you cannot review before you code. What you
-choose is which of them run, and that is `phases` in `config.toml` or per-plat.
+Phase **order** is deliberately not configurable. The executable sequence is
+`code → gate → review → docs → quality`. `phases: [code]` omits review but requires executable
+verification for every lot criterion. `docs` and `quality` are executable with dedicated prompts and contracts.
+The documenter produces an artifact; the quality reviewer assesses the worktree read-only.
+Configure their roles before enabling them.
 
 ## 10. What is not built yet
 
 - **Converge mode has never run against real agents.** The state machine is
   exhaustively tested — objective direction, stalling, ceilings, gaming — but no
   live lot has iterated yet.
-- **The Celery dispatcher and multi-lot DAG.** The design is a queue-backed graph with lots running in parallel; v0 runs one lot inline. `dispatch/` is behind an interface so the swap is contained.
-- **Closing the traverse, recording, the abstract.** The whole run-level join, including the cross-repo contract check.
-- **`docs` and `quality` phases.** Wired into the FSM and disabled by default; they need their providers.
-- **Prior-art retrieval.** `findings` is the corpus; a `pgvector` column would let past findings sharpen review prompts.
-- **Alembic.** `init` applies additive `ALTER … IF NOT EXISTS` as a stopgap; that handles added columns and nothing else.
+See [the full lifecycle and team guide](WORKFLOW.md) for the implemented dispatcher,
+Alembic migrations, session tracking, collaboration service, integration, packages,
+test deployments and readiness. `plat doctor` checks the installation.
+
+The pilot deliberately keeps one trusted team per database and provider execution
+on developer machines. SSO, a service-only remote executor transport, automatic
+session discovery and production deployment remain outside this pilot. Qualify a
+real local ticket and a two-machine team scenario before broader rollout.
 
 ## 11. Failure modes worth knowing
 
@@ -537,4 +544,47 @@ choose is which of them run, and that is `phases` in `config.toml` or per-plat.
 
 Plat **points at** worktrees; it never owns them. `lots.worktree_path` resolves to `<workspace_root>/.worktrees/<ANCHOR>/<lot>/`, created from a freshly fetched default branch. A worktree belongs to the repo it was cut from.
 
-Anchors that look like `ABC-123` get branch `dev-abc-123-<slug>`. Anything else — `fix_thing`, `spike_thing` — is used as the branch name verbatim, so unticketed work keeps its own convention.
+Anchors that look like `ABC-123` get branch `dev-123-<slug>`. Anything else — `fix_thing`, `spike_thing` — is used as the branch name verbatim, so unticketed work keeps its own convention.
+
+## 13. M0 execution guarantees
+
+The planner and hand-edited specs share validation. Planning rejects duplicate IDs,
+cycles, unknown dependencies, unsafe paths, missing setup/test commands, and phases
+without complete execution support. `needs_human` drafts cannot execute. Validation
+precedes worktree, database and shell side effects. Dry runs may create worktrees
+and run setup/tests, but never commit plan or tracker rows.
+
+A committed plan records its spec snapshot and original base SHA. Only an unstarted
+plan can be revised, with a decision recording the prior plan. Its original base
+is preserved even if the checkout has newer commits. Started work requires a new
+anchor to change scope. Reopening retains the accepted scope and base.
+
+Criteria use `lot: <key>` for ownership. Single-lot specs may omit the lot key;
+legacy database criteria without an owner remain shared among their lots. New
+multi-lot specs must assign each criterion explicitly. Coder/reviewer verdict IDs
+must match the declared lot criteria, except that a blocked coder can return a
+question before completing its assessment. Every declared `verify` command runs
+independently in that lot's worktree and its exit code/output become evidence.
+Criteria without commands require reviewer evidence; code-only runs reject them.
+
+Use `scope: run`, `verify_in: <lot-key>` and `verify: <command>` for criteria applied
+after all lots reach DONE. This executes in the named worktree; it does not combine
+repositories or create a deployment. Run checks must arrange their own integration
+inputs. Failed run checks block delivery and can be retried with `plat start`.
+
+Provider-level failure, a nonzero process exit, permission denials, or a reviewer
+modifying the checkout block execution even if JSON claims success. A missing or
+invalid result never inherits a prior attempt's result. Standalone review uses the
+same execution checks, persists its evidence, and distinguishes skipped tests
+from successful independent verification.
+
+If a supervisor dies, a live recorded agent prevents further work on that lot.
+After it exits, reconcile any expired execution claim on its owning installation; an unfinished attempt is blocked. Inspect
+its preserved work and use `plat reopen --note` to recover. Reopening launches a
+fresh coder attempt with the human answer, preserves history, resets the retry
+allowance and invalidates dependent lots and the previous delivery claim. It
+cannot alter shipped work or race an active downstream lot.
+
+All-DONE plus passing run checks means local delivery. ABORTED required work means
+incomplete work. Neither proves deployment or product readiness; full-lifecycle runs add those requirements through `plat workflow`. `plat close --note` records the operator's actual shipment
+statement only after full local delivery.

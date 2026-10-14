@@ -8,7 +8,7 @@ From nothing to a finished lot. Budget about twenty minutes, most of it waiting 
 - **Postgres** — bring your own, or let Plat run one (step 2)
 - **Docker** — only for the dashboard; everything else works without it
 - **At least one agent CLI**, logged in and working:
-  [Claude Code](https://claude.com/claude-code) (`claude`), [Codex](https://developers.openai.com/codex/cli) (`codex`), or Gemini CLI (`gemini`)
+  [Claude Code](https://claude.com/claude-code) (`claude`), [Codex](https://developers.openai.com/codex/cli) (`codex`)
 
 Plat shells out to these, so whatever account you are already logged into is what it uses. There are no API keys to configure.
 
@@ -233,6 +233,59 @@ git -C <worktree> diff origin/main..HEAD
 | the database will not start | port 5432 is taken; see the `PLAT_DB_PORT` note above |
 | `plat ui` shows an empty dashboard | nothing is running, which is correct — `plat demo` seeds a board to look at |
 | costs shown with `~` | estimated from tokens; Codex and Gemini do not report dollars |
-| a multi-lot plat is no faster | lots run one after another; parallelism is the unbuilt Celery dispatcher |
-| lot B did not know what lot A built | `depends_on` orders lots, it does not hand over content — put the contract in the plat map |
-| `unknown provider 'gemini'` | the Gemini adapter is a stub; point `documenter` at claude or drop the `docs` phase |
+| a multi-lot plat is no faster | use `--workers N` with `budget_usd: 0` for eligible independent lots |
+| lot B did not know what lot A built | Check A's latest `handoff[]`; an edge passes the reported contract to B's coder and reviewer |
+| unsupported phase/provider | Use code/review/docs/quality with configured Claude or Codex roles; Gemini is not implemented |
+
+## Criterion ownership and recovery
+
+For several lots, give every lot criterion an explicit `lot: <key>`. Omitting it is
+accepted only for a single-lot spec. The supervisor runs each `verify` command;
+the review must account for the exact declared criterion IDs.
+
+A criterion that belongs to the whole run needs an explicit execution location:
+
+```yaml
+criteria:
+  - id: API1
+    lot: api
+    statement: The API satisfies its local contract
+    verify: uv run pytest -q tests/contract
+  - id: RUN1
+    scope: run
+    verify_in: api
+    statement: The completed lots satisfy the integration contract
+    verify: uv run pytest -q tests/integration
+```
+
+Each lot still needs its own criteria. Run criteria execute after all lots are
+DONE, and a failure leaves the plat blocked. Correct the cause and rerun
+`plat start`; changed source should be reopened and reverified.
+
+When a lot asks for a person or an attempt is interrupted:
+
+```bash
+plat show DEV-1234
+plat reopen DEV-1234 my-service --note "Use the test tenant; access is now configured"
+plat start DEV-1234
+```
+
+Reopen starts a fresh attempt with the answer in its context, resets the retry
+allowance while preserving attempt history, and invalidates dependent lots. In
+`plat top`, `o` asks for the same reason. `plat start` does not implicitly unpause
+or reopen work. A shipped plat needs a new anchor for subsequent changes.
+
+After actual shipment, record it explicitly:
+
+```bash
+plat close DEV-1234 --note "Merged PR 123 and validated the deployment"
+```
+
+
+## Continue through delivery and team review
+
+Use `plat doctor` to qualify the installation, then follow [the full workflow guide](docs/WORKFLOW.md)
+for accepted context/specification, `plat sessions`, parallel or queued execution,
+integration, test deployment, readiness, and the authenticated `plat team` board.
+Existing local plans remain usable; `plat workflow begin` opts a planned run into
+required lifecycle acceptance and readiness checks before shipment.

@@ -32,6 +32,8 @@ class PlatState(StrEnum):
     CLOSING   = "closing"     # closing the traverse
     RECORDING = "recording"
     SIGNOFF   = "signoff"     # hard stop. a human, always.
+    INCOMPLETE = "incomplete" # required lots were aborted; never a delivery
+    BLOCKED   = "blocked"    # run-level verification needs attention
     DELIVERED = "delivered"   # Plat is finished; a human owns it now
     CLOSED    = "closed"      # a human says it shipped
     ABORTED   = "aborted"
@@ -111,6 +113,9 @@ class Ctx:
     progress: tuple[float, ...] = ()        # one reading per completed gate
     patience: int = PATIENCE
     max_iterations: int = MAX_ITERATIONS
+    max_attempts: int = MAX_ATTEMPTS
+    expected_criteria: tuple[str, ...] | None = None
+    attempt_start: int = 0
     # Which phases this plat runs. v0 ships code+review; docs and quality arrive
     # with their providers. A phase with no configured role must not be reachable.
     phases: frozenset[str] = ALL_PHASES
@@ -137,21 +142,26 @@ def gate_passed(gate: dict[str, Any] | None) -> bool:
         return False
     rc = gate.get("exit_code")
     ok = (rc == 0) if rc is not None else (gate.get("tests_failed", 1) == 0)
-    return ok and gate.get("diff_files", 0) > 0
+    return (ok and (gate.get("diff_required", True) is False or gate.get("diff_files", 0) > 0)
+            and all(c.get("met") is True for c in gate.get("criteria_check", [])))
 
 
-def criteria_met(verdict: dict[str, Any] | None) -> bool:
+def criteria_met(verdict: dict[str, Any] | None, expected: tuple[str, ...] | None = None) -> bool:
     if not verdict:
         return False
     checks = verdict.get("criteria_check", [])
-    return bool(checks) and all(c.get("met") for c in checks)
+    ids = [c.get("id") for c in checks]
+    if expected is not None and (len(ids) != len(expected) or set(ids) != set(expected)):
+        return False
+    return bool(checks) and all(c.get("met") is True for c in checks)
 
 
-def advance(verdict: dict[str, Any] | None, gate: dict[str, Any] | None) -> bool:
+def advance(verdict: dict[str, Any] | None, gate: dict[str, Any] | None,
+            expected: tuple[str, ...] | None = None) -> bool:
     return (
         bool(verdict)
         and verdict.get("verdict") == "pass"
-        and criteria_met(verdict)
+        and criteria_met(verdict, expected)
         and gate_passed(gate)
     )
 
@@ -194,6 +204,15 @@ def _waiting_on(ctx: Ctx) -> str:
 def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
     if ctx.paused:
         return Next("noop", reason="plat paused")
+    if state in (LotState.DONE, LotState.ABORTED):
+        return Next("noop", reason="terminal")
+    if state == LotState.CODING and not ctx.verdict:
+        return Next("human", LotState.BLOCKED, reason="coder result is missing; reconcile the interrupted attempt")
+    if state == LotState.CODING and ctx.verdict:
+        if ctx.verdict.get("status") == "blocked" or ctx.verdict.get("needs_human"):
+            questions = ctx.verdict.get("open_questions") or [ctx.verdict.get("summary", "coder needs a human")]
+            return Next("human", LotState.BLOCKED, reason="coder blocked: " + "; ".join(questions),
+                        inputs={"verdict": ctx.verdict})
     if ctx.budget_exhausted:
         return Next("human", LotState.BLOCKED, reason="budget ceiling reached")
     if ctx.mode == Mode.CONVERGE:
@@ -203,17 +222,14 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
         case LotState.PENDING:
             if not ctx.deps_met:
                 return Next("wait", reason=_waiting_on(ctx))
-            return _code(1, resume=False, why="dependencies satisfied")
+            return _code(attempt + 1, resume=False, why="dependencies satisfied")
 
         case LotState.CODING:
             return Next("gate", LotState.GATE, reason="coder finished; verifying independently")
 
         case LotState.GATE:
             if gate_passed(ctx.gate):
-                return Next("agent", LotState.REVIEWING, phase="review",
-                            role=PHASE_ROLE["review"], attempt=attempt,
-                            resume_session=False,          # reviewers are ALWAYS cold
-                            reason="gate passed", inputs={"gate": ctx.gate})
+                return _after("code", ctx.phases, attempt, "gate passed", {"gate": ctx.gate})
             return _retry(attempt, ctx, why="gate failed", extra={"gate": ctx.gate})
 
         case LotState.REVIEWING:
@@ -226,19 +242,14 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
                 return Next("human", LotState.BLOCKED,
                             reason=f"oscillation: {sorted(repeated)} raised twice",
                             inputs={"repeated": sorted(repeated)})
-            if advance(v, ctx.gate):
+            if advance(v, ctx.gate, ctx.expected_criteria):
                 return _after("review", ctx.phases, attempt, "review passed",
                               {"verdict": v})
             return _retry(attempt, ctx, why="changes_requested",
                           extra={"findings": len(fingerprints(v))})
 
-        case LotState.DOCS:
-            return _after("docs", ctx.phases, attempt, "docs complete", {})
-
-        case LotState.QUALITY:
-            if ctx.verdict and ctx.verdict.get("verdict") == "pass":
-                return Next("close", LotState.DONE, reason="lot complete")
-            return _retry(attempt, ctx, why="quality review requested changes")
+        case LotState.DOCS | LotState.QUALITY:
+            return _extra_phase(state, attempt, ctx)
 
         case LotState.DONE | LotState.ABORTED:
             return Next("noop", reason="terminal")
@@ -278,7 +289,7 @@ def _converge(state: LotState, n: int, ctx: Ctx) -> Next:
         case LotState.PENDING:
             if not ctx.deps_met:
                 return Next("wait", reason=_waiting_on(ctx))
-            return _code(1, resume=False, why="converge: first pass")
+            return _code(n + 1, resume=False, why="converge: first pass")
 
         case LotState.CODING:
             return Next("gate", LotState.GATE,
@@ -324,14 +335,17 @@ def _converge(state: LotState, n: int, ctx: Ctx) -> Next:
 
         case LotState.REVIEWING:
             v = ctx.verdict
-            if v and v.get("verdict") == "pass":
-                return Next("close", LotState.DONE, reason="objective met and reviewed")
+            if advance(v, ctx.gate, ctx.expected_criteria):
+                return _after("review", ctx.phases, n, "objective met and reviewed", {})
             if v and v.get("verdict") == "blocked":
                 return Next("human", LotState.BLOCKED, reason="reviewer blocked")
-            return _code(n + 1, resume=True, why="review requested changes")
+            repeated = oscillating(v, ctx.prev_fingerprints)
+            if repeated:
+                return Next("human", LotState.BLOCKED, reason=f"oscillation: {sorted(repeated)} raised twice")
+            return _retry(n, ctx, why="review requested changes")
 
         case LotState.DOCS | LotState.QUALITY:
-            return _after(state.value.lower(), ctx.phases, n, "phase complete", {})
+            return _extra_phase(state, n, ctx)
 
     return Next("noop", reason="terminal")
 
@@ -344,10 +358,20 @@ def _code(attempt: int, resume: bool, why: str, extra: dict | None = None) -> Ne
 
 def _retry(attempt: int, ctx: Ctx, why: str, extra: dict | None = None) -> Next:
     nxt = attempt + 1
-    if nxt > MAX_ATTEMPTS:
+    limit = ctx.max_iterations if ctx.mode == Mode.CONVERGE else ctx.max_attempts
+    if nxt > limit:
         return Next("human", LotState.BLOCKED,
-                    reason=f"{why}; {MAX_ATTEMPTS} attempts exhausted",
+                    reason=f"{why}; {limit} attempts exhausted",
                     inputs=extra or {})
     # resume the coder's own session on attempt 2 -- it keeps the context for WHY
     # it made those choices. By attempt 3 that context is a liability: start cold.
-    return _code(nxt, resume=(nxt == 2), why=why, extra=extra)
+    return _code(nxt, resume=(nxt - ctx.attempt_start == 2), why=why, extra=extra)
+
+
+def _extra_phase(state, attempt, ctx):
+    v = ctx.verdict or {}
+    if v.get("verdict") == "blocked":
+        return Next("human", LotState.BLOCKED, reason=f"{state.value.lower()} blocked", inputs={"verdict": v})
+    if advance(v, ctx.gate, ctx.expected_criteria):
+        return _after(state.value.lower(), ctx.phases, attempt, f"{state.value.lower()} passed", {})
+    return _retry(attempt, ctx, why=f"{state.value.lower()} requested changes")

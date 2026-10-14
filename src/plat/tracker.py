@@ -52,11 +52,14 @@ def lookup(cfg, anchor: str, timeout: int = 45) -> dict[str, Any] | None:
 def record(db, plat, info: dict | None) -> None:
     if not info:
         return
-    plat.ticket_status = info.get("status")
-    plat.ticket_summary = (info.get("summary") or "")[:400]
-    plat.ticket_url = info.get("url")
-    plat.ticket_checked_at = datetime.now(timezone.utc)
-    db.commit()
+    from .decisions import record as decision
+    def apply():
+        plat.ticket_status = info.get("status")
+        plat.ticket_summary = (info.get("summary") or "")[:400]
+        plat.ticket_url = info.get("url")
+        plat.ticket_checked_at = datetime.now(timezone.utc)
+    decision(db, plat_id=plat.id, actor="system", actor_detail="tracker.lookup",
+             kind="observation", decision="tracker state refreshed", inputs=info, apply=apply)
 
 
 def collides(info: dict | None, title: str) -> bool:

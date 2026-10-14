@@ -188,7 +188,7 @@ def test_a_finished_attempt_holds_no_pid():
 def test_the_runner_refuses_to_act_on_a_lot_with_a_live_agent():
     """The point of the whole exercise: do not gate a tree that is still moving."""
     from plat import runner
-    src = inspect.getsource(runner.run_lot)
+    src = inspect.getsource(runner._run_lot)
     head = src[:src.index("while True:")]
     assert "live_agent(db, lot)" in head
     assert "return lot.state" in head            # refuses, without changing state

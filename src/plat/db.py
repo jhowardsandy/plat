@@ -7,7 +7,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from .config import load
-from .models import Base
 
 _engine = None
 _Session = None
@@ -36,9 +35,11 @@ def session() -> Session:
 
 
 VIEWS = ["v_live_lots", "v_plat_summary", "v_decision_tree",
-         "v_delivered_plats", "v_reviews"]
+         "v_delivered_plats", "v_reviews", "v_claim_status", "v_session_status"]
 
 ADDITIVE = [
+    "ALTER TABLE criteria ADD COLUMN IF NOT EXISTS scope varchar(8) DEFAULT 'lot' NOT NULL",
+    "ALTER TABLE criteria ADD COLUMN IF NOT EXISTS verify_in varchar(64)",
     "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS cost_estimated boolean DEFAULT false",
     "ALTER TABLE attempts ADD COLUMN IF NOT EXISTS permission_denials integer DEFAULT 0",
     "ALTER TABLE lots ADD COLUMN IF NOT EXISTS base_ref varchar(64)",
@@ -57,28 +58,22 @@ ADDITIVE = [
 
 
 def init() -> list[str]:
-    """Create tables, apply additive columns, (re)install views. Idempotent.
-
-    ADDITIVE is a stopgap: create_all never alters an existing table, so a new
-    column would silently not exist on a database that predates it. It handles
-    added columns only -- a rename or a type change needs alembic, which is the
-    v1 answer.
-    """
-    Base.metadata.create_all(engine())
-    with engine().begin() as c:
-        # Views must go first: Postgres refuses to alter the type of a column a
-        # view selects, and views.sql recreates every one of them below anyway.
-        for v in VIEWS:
-            c.execute(text(f"DROP VIEW IF EXISTS {v} CASCADE"))
-        for stmt in ADDITIVE:
-            c.execute(text(stmt))
-    sql = (Path(__file__).parent / "views.sql").read_text()
+    """Transactionally upgrade the schema and reinstall projections."""
+    from alembic import command
+    from alembic.config import Config
+    cfg = Config()
+    cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
     done = []
     with engine().begin() as c:
-        for stmt in _split(sql):
+        # Serialize upgrades, including two first-ever init calls.
+        c.execute(text("SELECT pg_advisory_xact_lock(739217450)"))
+        cfg.attributes["connection"] = c
+        command.upgrade(cfg, "head")
+        for view in VIEWS:
+            c.execute(text(f"DROP VIEW IF EXISTS {view} CASCADE"))
+        for stmt in _split((Path(__file__).parent / "views.sql").read_text()):
             c.execute(text(stmt))
-            head = " ".join(stmt.split()[:4])
-            done.append(head)
+            done.append(" ".join(stmt.split()[:4]))
     return done
 
 

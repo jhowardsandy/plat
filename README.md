@@ -49,14 +49,14 @@ A **plat** divides one tract into numbered lots: independently developable, reco
 ## Install
 
 Requires Python 3.12+, Postgres, Docker (for the dashboard), and at least one agent
-CLI — `claude`, `codex` or `gemini` — already logged in. Plat shells out to whatever
+CLI — `claude` or `codex` — already logged in. Plat shells out to whatever
 account you are signed into; there are no API keys to configure.
 
 ```bash
 uv tool install --editable .     # puts `plat` on PATH
 plat setup                       # guided: probes what your account can reach, then configures
 plat init                        # schema and views
-plat skills                      # links /plat-up and /plat-run into ~/.claude/skills
+plat skills                      # links workflows for both Claude and Codex
 plat probe                       # does each agent CLI honour the contract, and is it honest?
 plat demo                        # seed a board so the first `plat ui` is not empty
 ```
@@ -104,7 +104,7 @@ reviewer.correctness:
   resume_session: false           # fresh eyes, every time
 ```
 
-Adapters ship for **Claude Code**, **Codex** and **Gemini**. All three are driven headlessly behind one uniform contract, so swapping a role's provider is a config change.
+Adapters ship for **Claude Code** and **Codex**. Both run headlessly behind one contract. Gemini is a future adapter, not an executable provider.
 
 ## What the dollar figures mean
 
@@ -126,31 +126,54 @@ Plat calls this **API-equivalent cost**, and that is the label you will see in
 `plat history` and `plat top`. Claude reports it; Codex and Gemini report only
 tokens, so theirs is estimated from published rates and shown with a `~`.
 
-## Status, and what it does not do yet
+## Full workflow and team collaboration
 
-Working and used in anger, but early. A plat runs `PENDING → CODING → GATE →
-REVIEWING → DONE | BLOCKED` per lot, with session resume, model escalation,
-oscillation detection and budget ceilings, and it has taken real tickets from a
-ticket file through to a merged pull request.
+The local development loop now extends through accepted context and specification,
+independent integration checks, a recorded delivery package, explicit test deployment,
+product validation, and readiness. Start with `plat workflow begin`; existing local
+runs remain compatible. See **[docs/WORKFLOW.md](docs/WORKFLOW.md)** for the complete
+operator guide, input examples, recovery, and team trust boundaries.
 
-Three limits worth knowing **before** you plan a multi-lot run, because each is
-invisible until it surprises you:
+- `plat doctor` checks configuration, migrations, binaries and stranded claims.
+- `plat sessions` tracks launched and explicitly attached Claude/Codex sessions.
+- By default, lots run one after another. `plat start --workers N` runs independent lots concurrently; bounded budgets stay serial.
+- `plat start --dispatcher celery` queues work for the owning installation.
+- `plat team serve` provides an authenticated team board, assignments, questions,
+  review requests, responses and durable activity replay.
+- `plat workflow` records integration, packages, deployment, validation and the abstract.
 
-> **Lots run one after another, not in parallel.** `plat start` walks them in a
-> loop. Splitting by repo buys isolation and an independent review per lot — it
-> does not buy wall-clock. Real parallelism is the Celery dispatcher, and
-> `dispatch/` is four stubs today.
+All four lot phases (`code`, `review`, `docs`, `quality`) have contracts and execution
+paths. Docs produces a durable documentation artifact; repository edits remain with
+the coder. Gemini is not implemented. The team pilot uses one database per trusted
+team, administrator-issued invitations and trusted executor machines. SSO,
+service-only remote execution, automatic desktop-session discovery, and production
+deployment are outside the implemented pilot. Real project and two-machine
+qualification remain necessary before broader rollout.
 
-> **`depends_on` orders lots; it does not hand anything over.** Lot B runs after
-> lot A, and B's context is the plat map as written *before* A ran. If B genuinely
-> needs to see what A built, it will not. Keep the contract between lots in the
-> plat map explicitly, or give B a gate that would fail if A's half is missing.
+## Reliability and local use
 
-> **`docs` cannot run**, because its default role points at Gemini and that adapter
-> is a stub. Point it at Claude, or leave the phase off.
+`plat plan` validates names, paths, dependencies, phases and criterion ownership
+before creating worktrees or running commands. A dry run creates worktrees and
+smokes their gates, but writes no database records. `--commit` records the accepted
+spec. An unstarted plan can be revised; a started plan is immutable. Use a new
+anchor for changed scope.
 
-Also unbuilt: closing the traverse, the recording package, the abstract, and
-Alembic. [docs/GUIDE.md §10](docs/GUIDE.md) is the honest list.
+Every lot owns explicit acceptance criteria. The supervisor runs their `verify`
+commands in that lot's worktree, independently of the agent. Code-only runs require
+a verify command for every criterion. Run-level criteria use `scope: run` and
+`verify_in: <lot-key>` and must pass before delivery.
+
+Provider failures, permission denials and coder questions stop at BLOCKED, even
+when a verdict file claims success. Recover with
+`plat reopen <anchor> <lot> --note "<answer or recovery decision>"`; the next start
+launches a fresh attempt. Reopening also invalidates downstream lots and obsolete
+delivery claims. An interrupted attempt needs explicit reconciliation after its
+process has stopped. Silent processes have a wall-clock timeout.
+
+`delivered` means every lot is DONE and run criteria passed locally. Aborted work
+is `incomplete`; neither outcome asserts deployment readiness. `plat close` accepts
+only a delivered plat and requires a shipment note. Start with local work, then
+use observed results and remaining limitations when demonstrating to the team.
 
 ## Licence
 

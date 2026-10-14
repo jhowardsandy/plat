@@ -109,7 +109,7 @@ slug: <slug>
 budget_usd: 15
 tickets: []
 related: []
-phases: [code, review]        # v0 ships these two; docs/quality need their providers
+phases: [code, review]        # only implemented phases; docs/quality are rejected
 plat_map: |
   <the problem, the architecture, the contracts, what is out of scope>
 lots:
@@ -158,3 +158,18 @@ Tell the user it is ready and that `/plat-run <TICKET>` starts it. **Do not star
 - Unticketed work uses a `<prefix>_<name>` anchor (`fix_`, `chore_`, `spike_`, `docs_`, `infra_`); Plat keeps that as the branch name verbatim. If it turns out to be worth tracking, open a ticket and re-anchor rather than merging a `prefix_` branch carrying real work.
 - Never commit planning notes into a code repo they describe.
 - If the repo root is dirty or behind `origin`, fix that first — a worktree cut from a stale base is the quiet start of cross-repo drift.
+
+## Full lifecycle acceptance
+
+For new work intended to proceed through test deployment and delivery readiness,
+start with `plat workflow begin <TICKET> --owner <responsible-person>`. Snapshot the
+collected context and accepted definition using `workflow accept` before committing
+the plan. After `plat plan --commit`, accept the exact specification snapshot with
+a rationale before starting. Use the current version from `workflow status` for
+each acceptance; stale versions fail safely. The field formats and complete command
+sequence are in `docs/WORKFLOW.md`.
+
+Use the same working-note location and preserve source references, unavailable
+sources, unanswered questions and explicit exclusions. Do not declare acceptance
+for unanswered blocking questions. Existing authorization in the conversation can
+supply acceptance; do not ask again merely because this is a different command.

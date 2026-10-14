@@ -122,9 +122,9 @@ def test_disabled_phases_are_unreachable():
     n = decide(LotState.REVIEWING, 1,
                Ctx(deps_met=True, verdict=PASS, gate=GOOD_GATE, phases=full))
     assert n.state == LotState.DOCS
-    assert decide(LotState.DOCS, 1, Ctx(deps_met=True, phases=full)).state == LotState.QUALITY
+    assert decide(LotState.DOCS, 1, Ctx(deps_met=True, phases=full, verdict=PASS, gate=GOOD_GATE)).state == LotState.QUALITY
     assert decide(LotState.DOCS, 1,
-                  Ctx(deps_met=True, phases=frozenset({"docs"}))).kind == "close"
+                  Ctx(deps_met=True, phases=frozenset({"docs"}), verdict=PASS, gate=GOOD_GATE)).kind == "close"
 
 
 def test_pause_is_reachable_from_plat_status():
@@ -135,7 +135,7 @@ def test_pause_is_reachable_from_plat_status():
     from plat import runner
     src = inspect.getsource(runner.build_ctx)
     assert "paused=" in src and 'status == "paused"' in src
-    assert "db.refresh(plat)" in inspect.getsource(runner.run_lot), \
+    assert "db.refresh(plat)" in inspect.getsource(runner._run_lot), \
         "pause set by another process is invisible without a refresh"
 
 

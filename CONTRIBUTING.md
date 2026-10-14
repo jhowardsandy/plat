@@ -39,7 +39,9 @@ to learn, and that is on purpose.
    prose to make a routing decision.
 2. **Never trust self-reported success.** The supervisor runs the tests; the agent's
    claim is evidence, not a verdict.
-3. **`decisions.record()` is the only mutation path.** No bare `UPDATE`.
+3. **`decisions.record()` is the domain mutation path.** Domain changes and their
+   evidence share a decision transaction. Heartbeats, PIDs and live log chunks are
+   independent telemetry; they must never change workflow state. Demo data is fixture maintenance.
 4. **Plat notifies you and never speaks to anyone else.** No posting to channels,
    opening pull requests or transitioning tickets as a side effect of a run.
 
@@ -47,3 +49,10 @@ to learn, and that is on purpose.
 
 `ruff` config lives in `pyproject.toml`. Three E-rules are suppressed deliberately
 and each says why — they are conventions in this codebase, not oversights.
+
+
+M0 tests in `tests/test_m0.py` use disposable PostgreSQL schemas and simulated
+providers with real git, CLI and supervisor commands. They never invoke paid agent
+CLIs. Run them against a test database where the test user can create schemas.
+A green mocked-provider suite is not a live CLI capability probe; `plat probe`
+remains the separate check for the installed/authenticated provider versions.

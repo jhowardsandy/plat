@@ -24,7 +24,14 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
 
 def default_branch(repo: Path) -> str:
     r = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], repo)
-    return r.stdout.strip().split("/")[-1] if r.returncode == 0 and r.stdout.strip() else "master"
+    if r.returncode != 0 or not r.stdout.strip():
+        discovered = _git(["remote", "set-head", "origin", "--auto"], repo)
+        if discovered.returncode != 0:
+            raise RuntimeError("cannot determine origin's default branch; configure origin/HEAD")
+        r = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], repo)
+    if r.returncode != 0 or not r.stdout.strip().startswith("origin/"):
+        raise RuntimeError("cannot determine origin's default branch")
+    return r.stdout.strip().removeprefix("origin/")
 
 
 def ensure(cfg: Config, anchor: str, lot_key: str, repo_rel: str,
@@ -46,7 +53,9 @@ def ensure(cfg: Config, anchor: str, lot_key: str, repo_rel: str,
     m = re.fullmatch(r"([A-Za-z]+)-(\d+)", anchor)
     branch = f"dev-{m.group(2)}-{slug}" if m else anchor
     if not wt.exists():
-        _git(["fetch", "origin", "--quiet"], repo)
+        fetched = _git(["fetch", "origin", "--quiet"], repo)
+        if fetched.returncode != 0:
+            raise RuntimeError(f"git fetch failed: {fetched.stderr.strip()}")
         base = base_ref or f"origin/{default_branch(repo)}"
         wt.parent.mkdir(parents=True, exist_ok=True)
         if base_ref:
@@ -55,7 +64,15 @@ def ensure(cfg: Config, anchor: str, lot_key: str, repo_rel: str,
             r = _git(["worktree", "add", "-b", branch, str(wt), base], repo)
         if r.returncode != 0:
             raise RuntimeError(f"git worktree add failed: {r.stderr.strip()}")
-    sha = _git(["rev-parse", "HEAD"], wt).stdout.strip()
+    expected_common = _git(["rev-parse", "--git-common-dir"], repo)
+    actual_common = _git(["rev-parse", "--git-common-dir"], wt)
+    if (actual_common.returncode != 0 or expected_common.returncode != 0
+            or (wt / actual_common.stdout.strip()).resolve() != (repo / expected_common.stdout.strip()).resolve()):
+        raise RuntimeError(f"existing worktree {wt} belongs to a different repository")
+    head_result = _git(["rev-parse", "HEAD"], wt)
+    if head_result.returncode != 0:
+        raise RuntimeError(f"cannot read base commit at {wt}")
+    sha = head_result.stdout.strip()
     return wt, branch, sha
 
 

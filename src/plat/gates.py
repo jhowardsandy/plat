@@ -7,6 +7,7 @@ the clean worktree, before a single token is spent.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -43,9 +44,12 @@ class GateResult:
         return asdict(self)
 
 
-def _sh(cmd: str, cwd: Path, timeout: int = 1800):
-    return subprocess.run(cmd, shell=True, cwd=str(cwd), capture_output=True,
-                          text=True, stdin=subprocess.DEVNULL, timeout=timeout)
+def _sh(cmd: str, cwd: Path, timeout: int = 1800, on_pid=None):
+    # The same bounded process-group runner as agents: a silent test process
+    # must time out too, including any children inheriting its output pipe.
+    from .adapters.base import spawn
+    rc, out, err, _ = spawn(["/bin/sh", "-c", cmd], cwd, timeout, on_pid=on_pid)
+    return subprocess.CompletedProcess(cmd, rc, out, err)
 
 
 def smoke(worktree: Path, test_cmd: str, setup_cmd: str | None = None) -> GateResult:
@@ -66,21 +70,23 @@ def smoke(worktree: Path, test_cmd: str, setup_cmd: str | None = None) -> GateRe
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 
 
-def probe(worktree: Path, cmd: str) -> float | None:
+def probe(worktree: Path, cmd: str, on_pid=None) -> float | None:
     """Measure progress for a converge lot.
 
     The command may print anything; the LAST number in its output is the reading.
     That is deliberately forgiving -- `pytest --cov | awk '/TOTAL/{print $NF}'`
     emits "78%", and demanding a bare float would make every probe a shell puzzle.
     """
-    p = _sh(cmd, worktree)
+    p = _sh(cmd, worktree, on_pid=on_pid)
+    if p.returncode != 0:
+        return None
     nums = NUMBER.findall((p.stdout or "") + (p.stderr or ""))
     return float(nums[-1]) if nums else None
 
 
 def run(worktree: Path, test_cmd: str, base: str | None,
-        probe_cmd: str | None = None, baseline_passed: int = 0) -> GateResult:
-    p = _sh(test_cmd, worktree)
+        probe_cmd: str | None = None, baseline_passed: int = 0, on_pid=None) -> GateResult:
+    p = _sh(test_cmd, worktree, on_pid=on_pid)
     blob = (p.stdout or "") + (p.stderr or "")
     # Prefer a runner's own "Tests ..." summary; fall back to the LAST count in the
     # output, since summaries come at the end and per-file chatter comes first.
@@ -100,9 +106,21 @@ def run(worktree: Path, test_cmd: str, base: str | None,
         failed = 0 if p.returncode == 0 else 1
     diff_files = 0
     if base:
-        d = _sh(f"git diff --name-only {base}..HEAD", worktree)
+        d = _sh(f"git diff --name-only {shlex.quote(base + '..HEAD')} --", worktree)
         diff_files = len([x for x in d.stdout.splitlines() if x.strip()])
-    prog = probe(worktree, probe_cmd) if probe_cmd else None
+    prog = probe(worktree, probe_cmd, on_pid=on_pid) if probe_cmd and p.returncode == 0 else None
     return GateResult(test_cmd, True, p.returncode, passed, failed, diff_files,
                       blob[-1500:], progress=prog, baseline_passed=baseline_passed,
                       counted=counted)
+
+
+def verify(worktree: Path, criteria, on_pid=None) -> list[dict]:
+    """Run the declared commands ourselves, never accepting an agent's claim."""
+    results = []
+    for c in criteria:
+        if c.verify_cmd:
+            p = _sh(c.verify_cmd, worktree, on_pid=on_pid)
+            results.append({"id": c.ac_id, "cmd": c.verify_cmd,
+                            "exit_code": p.returncode, "met": p.returncode == 0,
+                            "output_tail": (p.stdout + p.stderr)[-1500:]})
+    return results

@@ -61,9 +61,9 @@ stale_after_s = {stale_after_s}
 max_attempts = {max_attempts}
 
 # Which phases a plat runs when its own spec does not say. The ORDER is fixed --
-# code, review, docs, quality -- because it is semantic, not a preference: you
-# cannot review before you code. You choose which of them run.
-#   docs needs a gemini adapter, which is not implemented yet.
+# code, review, docs, quality -- you cannot review before you code. ["code"] is supported
+# only when every criterion has an independent verify command.
+# docs and quality require documenter and reviewer.quality roles.
 phases = {phases}
 
 # Plat interrupts YOU when a run needs you, and never announces to anyone else --
@@ -196,7 +196,10 @@ class Config:
         return self.workspace_root / ".worktrees"
 
     def roles(self) -> dict:
-        return yaml.safe_load(self.roles_path.read_text())
+        data = yaml.safe_load(self.roles_path.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("roles"), dict):
+            raise ValueError("roles.yaml must contain a roles mapping")
+        return data
 
 
 def home() -> Path:
@@ -228,8 +231,8 @@ def _file_values(p: Path | None = None) -> dict:
         return {}
     try:
         return tomllib.loads(p.read_text())
-    except Exception:
-        return {}
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"invalid config {p}: {exc}") from exc
 
 
 def load() -> Config:
@@ -252,6 +255,15 @@ def load() -> Config:
     if not origin.exists():
         origin.write_text(str(uuid.uuid4()))
 
+    phases = pick("phases", "PLAT_PHASES")
+    if isinstance(phases, str):
+        phases = [p.strip() for p in phases.split(",") if p.strip()]
+    if not isinstance(phases, list) or any(not isinstance(p, str) for p in phases):
+        raise ValueError("phases must be a list, or comma-separated PLAT_PHASES")
+    max_attempts = int(pick("max_attempts", "PLAT_MAX_ATTEMPTS"))
+    stale_after_s = int(pick("stale_after_s", "PLAT_STALE_AFTER_S"))
+    if max_attempts < 1 or stale_after_s < 1:
+        raise ValueError("max_attempts and stale_after_s must be positive")
     return Config(
         workspace_root=Path(pick("workspace_root", "PLAT_WORKSPACE")).expanduser(),
         database_url=str(pick("database_url", "PLAT_DATABASE_URL")),
@@ -260,9 +272,9 @@ def load() -> Config:
         origin_id=origin.read_text().strip(),
         notify=_pick_table(f, src, "notify"),
         tracker=_pick_table(f, src, "tracker", {}),
-        phases=list(pick("phases", "PLAT_PHASES")),
-        stale_after_s=int(pick("stale_after_s", "PLAT_STALE_AFTER_S")),
-        max_attempts=int(pick("max_attempts", "PLAT_MAX_ATTEMPTS")),
+        phases=phases,
+        stale_after_s=stale_after_s,
+        max_attempts=max_attempts,
         sources=src,
     )
 

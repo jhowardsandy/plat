@@ -20,14 +20,11 @@ isolation is the most common way a real defect gets through.
 
 ## What the supervisor already verified
 
-The tests were run independently of the author, with this result:
+{verification_summary}
 
 {gate}
 
-So do not spend the review re-checking whether the tests pass. Spend it on what
-tests do not catch: correctness under inputs the tests do not cover, contract
-drift against other repos, silent failure modes, and criteria claimed as met on
-thin evidence.
+{verification_guidance}
 
 {upstream}
 {prior_art}
