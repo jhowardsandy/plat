@@ -225,17 +225,54 @@ abstract; current readiness checks report unavailable live revisions honestly.
 
 One control-service database represents **one trusted team**. Administrators
 provision per-person bearer tokens into private files; the service stores only
-hashes. Viewers cannot mutate. Engineers create assignments, questions, notes and
+hashes. Public self-registration is disabled. A database administrator bootstraps
+the first admin; that admin can issue named, single-use invitations over the team
+service. Viewers cannot mutate. Engineers create assignments, questions, notes and
 review requests. Only the assignee or an administrator resolves an item. Review
 outcomes pin revisions, and changed revisions invalidate approval.
 
 ```sh
 plat team member-add justin --role admin --token-file /private/path/justin.token
-plat team member-add teammate --role engineer --token-file /private/path/teammate.token
 plat team serve                      # http://127.0.0.1:7318
 plat team board --token-file /private/path/justin.token
 plat team events --after 0 --token-file /private/path/justin.token
 ```
+
+After upgrading with `plat init`, invite the second laptop or a teammate:
+
+```sh
+# Administrator's laptop; use the real HTTPS team URL for remote access.
+plat team invite justin-laptop-two --role engineer --hours 24 \
+  --token-file /private/path/justin.token \
+  --invitation-file /private/path/laptop-two-invitation.json --url https://plat.example.com
+
+# Recipient's laptop, after privately transferring the invitation file.
+plat team join --invitation-file /private/path/laptop-two-invitation.json \
+  --token-file /private/path/laptop-two.token --url https://plat.example.com
+plat team board --token-file /private/path/laptop-two.token --url https://plat.example.com
+```
+
+The invitation is a 256-bit secret bound to the name and viewer/engineer role
+selected by the admin. It expires after 24 hours by default (maximum seven days),
+and cannot create another member after redemption. It is stored hashed on the
+server and never included in audit events. Treat the file as a temporary credential:
+anyone holding it can claim that identity before its intended recipient does.
+There is no email verification or device binding. Share it privately, never in a
+repository. Each team-service database is a separate workspace; invites grant
+access to that entire team's board, not selected repositories.
+
+`join` writes a private member token before making the request. If the response
+is lost, retain that file and repeat the same command with `--retry`; only the
+same token can recover the result. It never creates a second account or replaces
+an existing token file. Revoke an invitation using `plat team invite-revoke <id>
+--token-file <admin-token-file> --url <service-url>`. For someone who already
+joined, a database administrator uses `plat team member-revoke <name>` to revoke
+their access. Invite revocation alone does not remove an admitted member.
+
+Invitations grant collaboration-service access only. They never distribute SQL,
+Redis or provider credentials. Executor access is separately provisioned to
+trusted laptops. `member-add` remains a database-administrator operation; there
+is no unauthenticated member-provisioning endpoint.
 
 Open the board and enter the token; it stays in memory for the page session. Filter
 by ticket, person or repository, see work and sessions, assign responsibility,
@@ -246,8 +283,8 @@ offline. Events have durable replay cursors, and command retries use idempotency
 keys plus expected item versions.
 
 For remote access, put the service behind an HTTPS reverse proxy and bind with
-`--host <private-interface> --behind-tls`. Tokens are manually provisioned for the
-pilot; SSO and multiple team tenants are not implemented. Team clients need only
+`--host <private-interface> --behind-tls`. Tokens are provisioned through invitations
+or database administration; SSO and multiple team tenants are not implemented. Team clients need only
 the service URL and their own token. Trusted executor machines use the central
 Postgres connection and local provider credentials; they are administrators of
 that execution plane, not untrusted web clients. Do not give SQL or Redis

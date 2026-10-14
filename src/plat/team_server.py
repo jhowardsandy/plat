@@ -44,9 +44,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             auth = self.headers.get('Authorization', '')
+            body = None
+            if method == 'POST':
+                size = int(self.headers.get('Content-Length', '0'))
+                if size <= 0 or size > 65536:
+                    raise ValueError('request body must be 1–65536 bytes')
+                body = json.loads(self.rfile.read(size))
+                if not isinstance(body, dict):
+                    raise ValueError('command must be an object')
             with DB.session() as db:
-                member = team.authenticate(db, auth[7:] if auth.startswith('Bearer ') else '')
-                if method == 'GET' and url.path == '/api/board':
+                joining = method == 'POST' and url.path == '/api/join'
+                member = None if joining else team.authenticate(db, auth[7:] if auth.startswith('Bearer ') else '')
+                if joining:
+                    result = team.join(db, body.get('code'), body.get('token'))
+                elif method == 'POST' and url.path == '/api/invitations':
+                    result = team.invite(db, member, body.get('name'), body.get('role', 'engineer'), body.get('hours', 24))
+                elif method == 'POST' and url.path == '/api/invitations/revoke':
+                    result = team.revoke_invitation(db, member, body.get('id'))
+                elif method == 'GET' and url.path == '/api/board':
                     result = {**team.board(db), 'member': {'name': member.name, 'role': member.role}}
                 elif method == 'GET' and url.path == '/api/events':
                     after = int(parse_qs(url.query).get('after', ['0'])[0])
@@ -54,12 +69,6 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('cursor must be nonnegative')
                     result = team.events(db, after)
                 elif method == 'POST' and url.path == '/api/commands':
-                    size = int(self.headers.get('Content-Length', '0'))
-                    if size <= 0 or size > 65536:
-                        raise ValueError('request body must be 1–65536 bytes')
-                    body = json.loads(self.rfile.read(size))
-                    if not isinstance(body, dict):
-                        raise ValueError('command must be an object')
                     result = team.command(db, member, body)
                 else:
                     self.reply(404, {'error': 'route not found'})

@@ -357,3 +357,16 @@ class TeamMember(Base):
     role: Mapped[str] = mapped_column(String(16))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = _now()
+
+
+class TeamInvitation(Base):
+    __tablename__ = 'team_invitations'
+    id: Mapped[int] = _pk()
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(64))
+    role: Mapped[str] = mapped_column(String(16))
+    issuer: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    member_id: Mapped[int | None] = mapped_column(ForeignKey('team_members.id'), nullable=True)
+    created_at: Mapped[datetime] = _now()

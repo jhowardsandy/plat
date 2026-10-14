@@ -24,7 +24,8 @@ from .team_cli import app as team_app
 from .workflow_cli import app as workflow_app
 from .workflow_cli import session_app
 
-app = typer.Typer(add_completion=False, help="Plat - one ticket, many lots, one instrument.")
+app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False,
+                  help="Plat - one ticket, many lots, one instrument.")
 app.add_typer(team_app, name="team")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(session_app, name="sessions")

@@ -7,9 +7,10 @@ collaboration commands, not arbitrary shell/process controls.
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
 
@@ -22,6 +23,7 @@ from .models import (
     ExecutionClaim,
     Lot,
     Plat,
+    TeamInvitation,
     TeamMember,
     TrackedSession,
     Workflow,
@@ -36,18 +38,80 @@ class Forbidden(ValueError):
     pass
 
 
-def add_member(db, name, role):
-    if role not in ('viewer', 'engineer', 'admin') or not name.strip() or len(name) > 64:
+def add_member(db, name, role, *, token=None, issued_by=None):
+    if role not in ('viewer', 'engineer', 'admin') or not isinstance(name, str) or not name.strip() or len(name) > 64:
         raise ValueError('member needs a short name and viewer/engineer/admin role')
+    db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': 'member:' + name})
     if db.scalars(select(TeamMember).where(TeamMember.name == name)).first():
         raise Conflict('member already exists; rotate or revoke the existing token')
-    token = secrets.token_urlsafe(32)
+    token = token or secrets.token_urlsafe(32)
     member = TeamMember(name=name, role=role, token_hash=hashlib.sha256(token.encode()).hexdigest())
     from .ownership import actor
-    record(db, plat_id=None, actor='human', actor_detail=actor(), kind='membership',
+    record(db, plat_id=None, actor='human', actor_detail=issued_by or actor(), kind='membership',
            decision=f'member provisioned: {name}', inputs={'name': name, 'role': role},
            apply=lambda: db.add(member))
     return member, token
+
+
+def invite(db, member, name, role='engineer', hours=24):
+    if member.role != 'admin' or not member.active:
+        raise Forbidden('only administrators may invite members')
+    if not isinstance(name, str) or not name.strip() or len(name) > 64:
+        raise ValueError('a member name of 1–64 characters is required')
+    if role not in ('viewer', 'engineer'):
+        raise ValueError('invitations grant viewer or engineer access')
+    if type(hours) is not int or not 1 <= hours <= 168:
+        raise ValueError('invitation expiry must be 1–168 hours')
+    if db.scalars(select(TeamMember).where(TeamMember.name == name)).first():
+        raise Conflict('member name already exists')
+    code = secrets.token_urlsafe(32)
+    invitation = TeamInvitation(code_hash=hashlib.sha256(code.encode()).hexdigest(),
+        name=name, role=role, issuer=member.name,
+        expires_at=db.scalar(text('SELECT clock_timestamp()')) + timedelta(hours=hours))
+    record(db, plat_id=None, actor='human', actor_detail=member.name, kind='membership',
+           decision=f'invitation issued for {name}', inputs={'name': name, 'role': role},
+           apply=lambda: db.add(invitation))
+    return {'id': invitation.public_id, 'code': code, 'name': name, 'role': role,
+            'expires_at': invitation.expires_at}
+
+
+def revoke_invitation(db, member, public_id):
+    if member.role != 'admin' or not member.active:
+        raise Forbidden('only administrators may revoke invitations')
+    invitation = db.scalars(select(TeamInvitation).where(
+        TeamInvitation.public_id == public_id).with_for_update()).first()
+    if not invitation:
+        raise ValueError('invitation not found')
+    record(db, plat_id=None, actor='human', actor_detail=member.name, kind='membership',
+           decision=f'invitation revoked: {public_id}', inputs={'id': public_id},
+           apply=lambda: setattr(invitation, 'revoked', True))
+    return {'id': public_id, 'revoked': True}
+
+
+def join(db, code, token):
+    # Both secrets are 256-bit URL-safe values; never put them in audit records.
+    if not isinstance(code, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', code):
+        raise Forbidden('invalid or unavailable invitation')
+    if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+        raise ValueError('a generated 256-bit member token is required')
+    invitation = db.scalars(select(TeamInvitation).where(
+        TeamInvitation.code_hash == hashlib.sha256(code.encode()).hexdigest()).with_for_update()).first()
+    if not invitation or invitation.revoked:
+        raise Forbidden('invalid or unavailable invitation')
+    if invitation.member_id:
+        member = db.get(TeamMember, invitation.member_id)
+        if not member.active or not secrets.compare_digest(member.token_hash, hashlib.sha256(token.encode()).hexdigest()):
+            raise Forbidden('invalid or unavailable invitation')
+        # Only the already-joined holder can recover a lost response, even after expiry.
+        return {'member': member.name, 'role': member.role}
+    if invitation.expires_at <= db.scalar(text('SELECT clock_timestamp()')):
+        raise Forbidden('invalid or unavailable invitation')
+    member, _ = add_member(db, invitation.name, invitation.role, token=token,
+                           issued_by=f'invitation:{invitation.public_id}')
+    record(db, plat_id=None, actor='human', actor_detail=member.name, kind='membership',
+           decision=f'invitation redeemed: {invitation.public_id}', inputs={'id': invitation.public_id},
+           apply=lambda: setattr(invitation, 'member_id', member.id))
+    return {'member': member.name, 'role': member.role}
 
 
 def authenticate(db, token):
