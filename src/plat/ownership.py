@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, select, text
 
-from .models import Attempt, ExecutionClaim, Lot, TrackedSession
+from .models import Attempt, ExecutionClaim, Lot, Plat, TrackedSession
 
 current = ContextVar('execution_claim', default=None)
 
@@ -36,28 +36,45 @@ def _lock(db, key):
     db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))'), {'key': key})
 
 
-def acquire(db, cfg, plat, lot):
-    from .decisions import record
+def lock_resource(db, lot):
+    """Serialize automated and interactive writers, including different lot records."""
+    db.execute(select(Plat.id).where(Plat.id == lot.plat_id).with_for_update())
     host = host_id()
-    configured = lot.config or {}
-    if configured.get('executor_id') and configured['executor_id'] != cfg.origin_id:
-        raise OwnershipError('lot belongs to another installation; localize a pending lot before execution')
-    if configured.get('host_id') and configured['host_id'] != host:
-        raise OwnershipError('lot belongs to another host; paths and PIDs are not portable')
     resource = f'{host}:{Path(lot.worktree_path).resolve()}'
     _lock(db, resource)
     _lock(db, f'lot:{lot.id}')
     db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
     db.refresh(lot)
+    if resource != f'{host}:{Path(lot.worktree_path).resolve()}':
+        raise OwnershipError('worktree assignment changed; retry against its current location')
+    return resource
+
+
+def interactive_writers(db, lot):
+    candidates = db.execute(select(TrackedSession, Lot.worktree_path).join(Lot).where(
+        TrackedSession.source == 'interactive',
+        TrackedSession.state.in_(['active', 'idle', 'unknown', 'interrupted']),
+        (TrackedSession.lot_id == lot.id) | (TrackedSession.host_id == host_id()))).all()
+    path = Path(lot.worktree_path).resolve()
+    return [session for session, worktree in candidates
+            if session.lot_id == lot.id or Path(worktree).resolve() == path]
+
+
+def acquire(db, cfg, plat, lot):
+    from .decisions import record
+    host = host_id()
+    resource = lock_resource(db, lot)
+    configured = lot.config or {}
+    if configured.get('executor_id') and configured['executor_id'] != cfg.origin_id:
+        raise OwnershipError('lot belongs to another installation; localize a pending lot before execution')
+    if configured.get('host_id') and configured['host_id'] != host:
+        raise OwnershipError('lot belongs to another host; paths and PIDs are not portable')
     claim = db.get(ExecutionClaim, lot.id, populate_existing=True)
     other = db.scalars(select(ExecutionClaim).where(
         ExecutionClaim.resource == resource, ExecutionClaim.active.is_(True))).first()
     if (claim and claim.active) or other:
         raise OwnershipError('execution already claimed; expired claims require reconciliation on the owning host')
-    attached = db.scalars(select(TrackedSession).where(
-        TrackedSession.lot_id == lot.id, TrackedSession.source == 'interactive',
-        TrackedSession.state.in_(['active', 'idle', 'unknown', 'interrupted']))).first()
-    if attached:
+    if interactive_writers(db, lot):
         raise OwnershipError('an attached interactive session must be completed or failed before automated execution')
     now = db.scalar(select(func.clock_timestamp()))
     if not claim:
@@ -80,6 +97,9 @@ def fence(db):
     if info is None:
         return
     with db.no_autoflush:
+        plat_id = db.scalar(select(Lot.plat_id).where(Lot.id == info[0]))
+        db.execute(select(Plat.id).where(Plat.id == plat_id).with_for_update())
+        db.execute(select(Lot.id).where(Lot.id == info[0]).with_for_update())
         claim = db.scalars(select(ExecutionClaim).where(ExecutionClaim.lot_id == info[0])
                            .with_for_update().execution_options(populate_existing=True)).one()
     if not claim.active or claim.token != info[1] or claim.generation != info[2]:
@@ -89,10 +109,14 @@ def fence(db):
 
 
 def renew(db, info):
+    # Same lot-before-claim order as fencing, so a heartbeat cannot deadlock a result.
+    db.execute(select(Lot.id).where(Lot.id == info[0]).with_for_update())
     claim = db.scalars(select(ExecutionClaim).where(ExecutionClaim.lot_id == info[0])
                        .with_for_update()).one()
     if not claim.active or claim.token != info[1] or claim.generation != info[2]:
         raise OwnershipError('execution ownership lost')
+    if claim.expires_at <= db.scalar(select(func.clock_timestamp())):
+        raise OwnershipError('expired execution cannot renew; reconcile before retrying')
     claim.expires_at = db.scalar(select(func.clock_timestamp())) + timedelta(seconds=90)
     claim.updated_at = datetime.now(timezone.utc)
 
@@ -100,6 +124,7 @@ def renew(db, info):
 def release(db, plat, info):
     from .decisions import record
     db.rollback()
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
     claim = db.scalars(select(ExecutionClaim).where(ExecutionClaim.lot_id == info[0])
                        .with_for_update()).one()
     if claim.active and claim.token == info[1] and claim.generation == info[2]:
@@ -130,7 +155,9 @@ def reconcile(db, cfg, plat, lot, note):
     from .decisions import record
     if not note.strip():
         raise OwnershipError('a reconciliation note is required')
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
     _lock(db, f'lot:{lot.id}')
+    db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
     claim = db.scalars(select(ExecutionClaim).where(ExecutionClaim.lot_id == lot.id)
                        .with_for_update()).first()
     if not claim or not claim.active:

@@ -299,6 +299,9 @@ def _run_lot(db: DbSession, cfg: Config, plat: Plat, lot: Lot, roles_cfg: dict,
 
 def reopen_lot(db, plat, lot, note: str):
     """Restart deliberately, invalidating dependent work and old delivery claims."""
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    db.refresh(lot)
     if not note.strip():
         raise ValueError("a recovery decision or answer is required")
     if plat.closed_at is not None:
@@ -396,6 +399,15 @@ def maybe_deliver_plat(db: DbSession, plat: Plat, log=print, cfg=None) -> bool:
             except OwnershipError as exc:
                 log(f"  run criterion {criterion.ac_id} waits for its owning executor: {exc}")
                 return False
+    # Checks commit their own attempts and release claims. Re-read under locks:
+    # cancellation or reopening may have happened while a command was running.
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id).with_for_update()
+                      .execution_options(populate_existing=True)).all()
+    if (plat.status in ("closed", "aborted", "paused") or plat.delivered_at is not None
+            or any(l.state != LotState.DONE.value for l in lots)):
+        return False
     failed = any(c["met"] is not True for c in checks)
     def finish():
         if failed:

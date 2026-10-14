@@ -145,7 +145,7 @@ operator guide, input examples, recovery, and team trust boundaries.
 All four lot phases (`code`, `review`, `docs`, `quality`) have contracts and execution
 paths. Docs produces a durable documentation artifact; repository edits remain with
 the coder. Gemini is not implemented. The team pilot uses one database per trusted
-team, manually provisioned credentials and trusted executor machines. SSO,
+team, administrator-issued invitations and trusted executor machines. SSO,
 service-only remote execution, automatic desktop-session discovery, and production
 deployment are outside the implemented pilot. Real project and two-machine
 qualification remain necessary before broader rollout.

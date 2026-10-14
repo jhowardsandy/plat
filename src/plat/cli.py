@@ -138,7 +138,7 @@ def setup(
     preset = ask("  preset", "balanced", list(S.PRESETS))
 
     c.print("\n[bold]5. phases[/bold]")
-    c.print("  [dim]Order is fixed: code then review. Docs and quality are not implemented yet.[/dim]")
+    c.print("  [dim]Order is fixed: code, review, docs, quality. Default: code and review; enable optional phases in the spec with configured roles.[/dim]")
     phases = ["code", "review"]
 
     c.print("\n[bold]6. where your repositories are[/bold]")
@@ -601,9 +601,16 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
         from sqlalchemy import text
         s.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                   {"key": f"plan:{cfg.origin_id}:{d['anchor']}"})
-        p = s.scalars(select(Plat).where(Plat.anchor == d["anchor"], Plat.origin_id == cfg.origin_id, Plat.kind == "plat")).first()
+        p = s.scalars(select(Plat).where(Plat.anchor == d["anchor"], Plat.origin_id == cfg.origin_id, Plat.kind == "plat").with_for_update()).first()
         existing = {} if p is None else {l.key: l for l in s.scalars(select(Lot).where(Lot.plat_id == p.id))}
         if p is not None:
+            from .models import ExecutionClaim
+            from .ownership import interactive_writers
+            if (s.scalar(select(ExecutionClaim.lot_id).join(Lot).where(
+                    Lot.plat_id == p.id, ExecutionClaim.active.is_(True)).limit(1))
+                    or any(interactive_writers(s, lot) for lot in existing.values())):
+                c.print("Stop and reconcile active sessions before revising the plan.")
+                raise typer.Exit(1)
             attempted = s.scalar(select(Attempt.id).join(Lot).where(Lot.plat_id == p.id).limit(1))
             if attempted is not None or p.status != "planned":
                 c.print("This plat has started. Its accepted plan and base refs are immutable; use a new anchor for revised scope.")
@@ -715,6 +722,8 @@ def start(anchor: str, workers: int = typer.Option(1, min=1, max=16),
     cfg = load(); roles_cfg = cfg.roles()
     with DB.session() as s:
         p = _resolve(s, anchor)
+        s.execute(select(Plat.id).where(Plat.id == p.id).with_for_update())
+        s.refresh(p)
         if p.status in ("closed", "aborted", "paused"):
             c.print(f"{p.anchor} is {p.status}; resume paused work or reopen a stopped lot explicitly")
             raise typer.Exit(1)
@@ -724,13 +733,13 @@ def start(anchor: str, workers: int = typer.Option(1, min=1, max=16),
             s.scalars(select(Lot).where(Lot.plat_id == p.id)).all())
         for lot in lots:
             _check_roles(cfg, (lot.config or {}).get("phases", cfg.phases))
+        if workers > 1 and p.budget_usd > 0:
+            raise typer.BadParameter("parallel execution requires budget_usd: 0; bounded budgets run serially")
         from .decisions import record
         record(s, plat_id=p.id, actor="human", actor_detail="cli.start", kind="transition",
                decision="execution requested", inputs={"was": p.status},
                apply=lambda: setattr(p, "status", "running") if p.delivered_at is None else None)
         s.commit()
-        if workers > 1 and p.budget_usd > 0:
-            raise typer.BadParameter("parallel execution requires budget_usd: 0; bounded budgets run serially")
         if dispatcher == "celery":
             from .dispatch.tasks import execute
             job = execute.apply_async(args=[p.id, cfg.origin_id, workers], queue="plat." + cfg.origin_id)
@@ -760,6 +769,8 @@ def pause(anchor: str = typer.Argument(None), resume: bool = typer.Option(False,
     from .decisions import record
     with DB.session() as s:
         p = _resolve(s, anchor)
+        s.execute(select(Plat.id).where(Plat.id == p.id).with_for_update())
+        s.refresh(p)
         was = p.status
         if was not in ("planned", "running", "paused", "blocked"):
             c.print(f"{p.anchor} is {was}; only active work can be paused/resumed")
@@ -913,15 +924,17 @@ def close(anchor: str = typer.Argument(None),
         p = _resolve(s, anchor)
         from .lifecycle import readiness
         from .models import Workflow
+        s.execute(select(Plat.id).where(Plat.id == p.id).with_for_update())
+        s.refresh(p)
+        if p.closed_at is not None:
+            c.print(f"[dim]{p.anchor} already closed {p.closed_at:%Y-%m-%d}[/dim]")
+            return
         if s.get(Workflow, p.id):
             report = readiness(s, p)
             if not report["ready"]:
                 c.print(report)
                 raise typer.Exit(1)
 
-        if p.closed_at is not None:
-            c.print(f"[dim]{p.anchor} already closed {p.closed_at:%Y-%m-%d}[/dim]")
-            return
         lots = s.scalars(select(Lot).where(Lot.plat_id == p.id)).all()
         if p.status != "delivered" or p.delivered_at is None or not lots or any(l.state != "DONE" for l in lots):
             c.print(f"{p.anchor} is not fully delivered; complete or reconcile all required work before recording shipment")

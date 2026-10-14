@@ -149,12 +149,17 @@ def localize(anchor: str, lot: str, repo: str, note: str = typer.Option(...)):
         raise typer.BadParameter("repo must name a git checkout inside the configured workspace")
     with DB.session() as db:
         p = resolve(db, anchor)
+        from .models import Plat
+        db.execute(select(Plat.id).where(Plat.id == p.id).with_for_update())
         row = db.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot).with_for_update()).one()
         if not note.strip() or row.state != "PENDING" or db.scalar(select(Attempt.id).where(Attempt.lot_id == row.id).limit(1)):
             raise L.WorkflowError("only never-started pending lots can be localized; provide a handoff note")
         claim = db.get(ExecutionClaim, row.id)
         if claim and claim.active:
             raise L.WorkflowError("reconcile active execution before changing its installation")
+        from .ownership import interactive_writers
+        if interactive_writers(db, row):
+            raise L.WorkflowError("finish the attached interactive session before localizing")
         if (row.config or {}).get("repository_identity") != L.canonical_repo(source):
             raise L.WorkflowError("local checkout has a different canonical origin")
         wt, branch, _ = worktree.ensure(cfg, p.anchor, row.key, repo, p.anchor.lower(), row.base_ref)

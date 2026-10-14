@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 
 from .decisions import record
-from .models import Artifact, CollaborationItem, Lot, StageRecord, Workflow
+from .models import Artifact, CollaborationItem, Lot, Plat, StageRecord, Workflow
 from .ownership import actor
 
 
@@ -93,6 +93,10 @@ def begin(db, plat, owner):
 
 
 def locked(db, plat, expected=None):
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
+    db.refresh(plat)
+    if plat.closed_at is not None:
+        raise WorkflowError('shipped work is immutable; use a new plat')
     w = db.scalars(select(Workflow).where(Workflow.plat_id == plat.id).with_for_update()
                    .execution_options(populate_existing=True)).first()
     if not w:
@@ -280,8 +284,11 @@ def readiness(db, plat):
                 'version': w.version}
     if w.stage not in ('ready', 'closed'):
         missing.append(f'workflow stage: {w.stage}')
-    if w.spec_hash != current_spec(db, plat):
-        missing.append('specification changed')
+    try:
+        if w.spec_hash != current_spec(db, plat):
+            missing.append('specification changed')
+    except WorkflowError:
+        missing.append('committed specification is missing')
     if plat.status not in ('delivered', 'closed') or plat.delivered_at is None:
         missing.append('local run-level delivery is not established')
     lots = db.scalars(select(Lot).where(Lot.plat_id == plat.id)).all()
