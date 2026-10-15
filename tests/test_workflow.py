@@ -48,7 +48,7 @@ def test_migrations_repeat_without_losing_rows(case):
     DB.init(); DB.init()
     assert rows(Plat)[0].public_id == before
     with DB.session() as db:
-        assert db.scalar(text('SELECT version_num FROM alembic_version')) == '0005'
+        assert db.scalar(text('SELECT version_num FROM alembic_version')) == '0006'
 
 
 def test_exclusive_claim_and_fenced_old_result(case):

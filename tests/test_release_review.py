@@ -163,7 +163,7 @@ def test_upgrade_pre_kind_legacy_schema_preserves_records(case):
             config = Config(); config.set_main_option('script_location', str(directory))
             config.attributes['connection'] = conn
             command.upgrade(config, 'head')
-            assert conn.scalar(text('SELECT version_num FROM alembic_version')) == '0005'
+            assert conn.scalar(text('SELECT version_num FROM alembic_version')) == '0006'
             row = conn.execute(text('SELECT title,kind,public_id FROM plats')).one()
             assert row.title == 'Preserve me' and row.kind == 'plat' and row.public_id
         finally:
