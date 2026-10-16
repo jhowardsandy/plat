@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import db as DB
-from . import team
+from . import team, workspace
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -62,7 +62,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif method == 'POST' and url.path == '/api/invitations/revoke':
                     result = team.revoke_invitation(db, member, body.get('id'))
                 elif method == 'GET' and url.path == '/api/board':
-                    result = {**team.board(db), 'member': {'name': member.name, 'role': member.role}}
+                    result = {**team.board(db), **workspace.preferences(db, member), 'member': {'name': member.name, 'role': member.role}}
+                elif method == 'GET' and url.path == '/api/room':
+                    result = workspace.room(db, parse_qs(url.query).get('id', [''])[0])
+                elif method == 'POST' and url.path == '/api/workspace':
+                    result = workspace.command(db, member, body)
                 elif method == 'GET' and url.path == '/api/events':
                     after = int(parse_qs(url.query).get('after', ['0'])[0])
                     if after < 0:

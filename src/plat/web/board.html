@@ -1,3 +1,94 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Plat · Team work</title><link rel="stylesheet" href="/board.css"></head><body>
-<header><div><p class="eyebrow">PLAT / TEAM WORKSPACE</p><h1>Work, in view.</h1><p>Ownership, progress, reviews, and the decisions that connect them.</p></div><span id="connection">Not connected</span></header>
-<main><form id="login"><label>Team access token <input id="token" type="password" autocomplete="off" required></label><button>Connect</button></form><section class="toolbar"><label>Find work <input id="filter" placeholder="Ticket, person, repository…"></label><button id="refresh">Refresh</button><button id="disconnect">Disconnect</button></section><p id="error" role="alert"></p><button id="retry" hidden>Retry pending command</button><div id="board"></div><section><h2>Recent activity</h2><ol id="events"></ol></section></main><script src="/board.js" defer></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Plat Room · Team workspace</title>
+    <link rel="stylesheet" href="/board.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">PLAT / TEAM WORKSPACE</p>
+        <h1>Plat Room</h1>
+        <p>Find the work. Inspect the evidence. Make the next decision.</p>
+      </div>
+      <span id="connection" role="status">Not connected</span>
+    </header>
+    <main>
+      <form id="login">
+        <label
+          >Team access token<input
+            id="token"
+            type="password"
+            autocomplete="off"
+            required /></label
+        ><button>Connect</button>
+      </form>
+      <p id="error" role="alert"></p>
+      <button id="retry" hidden>Retry pending command</button>
+      <div id="workspace" hidden class="shell">
+        <aside>
+          <nav id="navigation" aria-label="Workspace views"></nav>
+          <h2 class="small-heading">Saved views</h2>
+          <div id="saved"></div>
+        </aside>
+        <div class="content">
+          <div class="toolbar">
+            <div class="button-group">
+              <button id="refresh">Refresh</button
+              ><button id="disconnect">Disconnect</button>
+            </div>
+            <span id="identity"></span>
+          </div>
+          <section id="list">
+            <h2 id="view-title">Tickets</h2>
+            <div class="toolbar">
+              <label
+                >Find within view<input
+                  id="filter"
+                  placeholder="Ticket, engineer, service…" /></label
+              ><label
+                >Product<select id="product">
+                  <option value="">All products</option>
+                </select></label
+              ><label
+                >Sort<select id="sort">
+                  <option value="attention">Needs attention first</option>
+                  <option value="ticket">Ticket</option>
+                  <option value="engineer">Engineer</option>
+                  <option value="repo">Repository</option>
+                </select></label
+              ><label class="check"
+                ><input type="checkbox" id="closed" />Include shipped
+                work</label
+              >
+            </div>
+            <details>
+              <summary>Save this view</summary>
+              <form id="save-view">
+                <label
+                  >Name<input id="view-name" maxlength="80" required /></label
+                ><label class="check"
+                  ><input type="checkbox" id="view-shared" />Share with
+                  team</label
+                ><button>Save view</button>
+              </form>
+            </details>
+            <p id="counts" class="meta"></p>
+            <div id="board"></div>
+          </section>
+          <section id="room" hidden>
+            <button id="back" class="secondary">← Back to workspace</button>
+            <div id="room-content"></div>
+          </section>
+          <details class="activity">
+            <summary>Team activity</summary>
+            <ol id="events"></ol>
+          </details>
+        </div>
+      </div>
+    </main>
+    <script src="/board.js" defer></script>
+  </body>
+</html>

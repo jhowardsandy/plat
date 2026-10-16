@@ -373,3 +373,20 @@ class TeamInvitation(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     member_id: Mapped[int | None] = mapped_column(ForeignKey('team_members.id'), nullable=True)
     created_at: Mapped[datetime] = _now()
+
+
+class RepositoryCatalog(Base):
+    __tablename__ = 'repository_catalog'
+    identity: Mapped[str] = mapped_column(Text, primary_key=True)
+    products: Mapped[list] = mapped_column(JSONB, default=list)
+    services: Mapped[list] = mapped_column(JSONB, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SavedView(Base):
+    __tablename__ = 'saved_views'
+    id: Mapped[int] = _pk()
+    name: Mapped[str] = mapped_column(String(80))
+    owner: Mapped[str] = mapped_column(String(128))
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    settings: Mapped[dict] = mapped_column(JSONB)
