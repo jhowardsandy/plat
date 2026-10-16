@@ -187,3 +187,11 @@ LEFT JOIN LATERAL (
   FROM collaboration_items i WHERE i.plat_id = p.id AND i.state = 'open'
     AND (i.lot_id IS NULL OR i.lot_id = l.id)
 ) work ON true;
+
+CREATE VIEW v_executor_status AS
+SELECT id, COALESCE(active AND lease_until > clock_timestamp(), false) AS online
+FROM executors;
+
+CREATE VIEW v_execution_command_status AS
+SELECT c.id, c.state IN ('acknowledged', 'running') AND NOT e.online AS connection_lost
+FROM execution_commands c JOIN v_executor_status e ON e.id = c.executor_id;

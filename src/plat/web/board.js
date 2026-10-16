@@ -186,6 +186,10 @@ async function retry() {
   if (!pending) return false;
   try {
     await api(pending.path, pending.body);
+    for (const form of document.querySelectorAll("#room-content form"))
+      form.dispatchEvent(
+        new CustomEvent("commandconfirmed", { detail: pending }),
+      );
     pending = null;
     storePending();
     await refresh(false);
@@ -614,6 +618,7 @@ function renderRoom() {
     "sessions",
     "decisions",
     "coordinate",
+    "execution",
   ]) {
     const b = button(
       t[0].toUpperCase() + t.slice(1),
@@ -661,10 +666,12 @@ function renderRoom() {
     root.append(
       node(
         "p",
-        "Execution and deployment remain owner-machine CLI operations in this release. No browser action starts an agent.",
+        "Use the Execution tab to request Start, Pause, or Resume on the owning machine. Deployment remains a local CLI operation.",
         "meta",
       ),
     );
+  } else if (roomTab === "execution") {
+    root.append(executionControls(p, r.execution));
   } else if (roomTab === "evidence") {
     root.append(
       node("h3", "Acceptance criteria"),
@@ -961,3 +968,164 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 setInterval(() => refresh(false), 15000);
+
+function executionControls(p, execution) {
+  const root = node("section");
+  const machines = execution.executors.filter((e) => e.matches);
+  root.append(node("h3", "Owning machine"));
+  root.append(
+    node(
+      "p",
+      machines.length
+        ? machines
+            .map(
+              (e) =>
+                `${e.name} · ${e.online ? "Online" : "Offline"} · last seen ${when(e.seen)}`,
+            )
+            .join("; ")
+        : "No registered executor matches all lots. Register and connect the owning machine locally.",
+    ),
+  );
+  root.append(
+    node(
+      "p",
+      "Requests are authenticated and recorded. Acknowledged means the machine received the request; completed means the control finished, not that the ticket is delivered. Pause allows in-flight agents to finish.",
+      "meta",
+    ),
+  );
+  if (member.role !== "viewer" && machines.length) {
+    const form = node("form", undefined, "composer"),
+      buttons = node("div", undefined, "button-group");
+    const machine = select(
+      machines.map((e) => [
+        e.id,
+        e.name + (e.online ? " · online" : " · offline"),
+      ]),
+    );
+    const note = node("textarea");
+    note.rows = 3;
+    note.maxLength = 4000;
+    note.required = true;
+    note.placeholder = "Reason and context for this execution request";
+    note.oninput = () => {
+      form.dataset.dirty = "true";
+      note.style.height = "auto";
+      note.style.height = note.scrollHeight + "px";
+    };
+    const preview = node(
+      "p",
+      "Choose a control to review its effect before submitting.",
+      "meta wide",
+    );
+    let action;
+    const submit = node("button", "Review a control first");
+    submit.type = "submit";
+    submit.disabled = true;
+    for (const a of ["start", "pause", "resume"]) {
+      const b = button(
+        a[0].toUpperCase() + a.slice(1),
+        () => {
+          action = a;
+          form.dataset.dirty = "true";
+          preview.textContent = `${a.toUpperCase()} ${p.anchor} on ${machines.find((e) => e.id === machine.value)?.name}. Workflow v${p.version}; ${execution.scope.lots.length} lot(s) (${execution.scope.lots.map((l) => l.key + ": " + l.phases.join(" → ")).join("; ")}); ${p.budget ? money(execution.scope.budget) + " approximate budget" : "unbounded budget"}. ${a === "pause" ? "Current agents may finish; no new phase should start." : "Launch the configured phases serially using the machine's logged-in provider accounts."}`;
+          submit.textContent = "Request " + a;
+          submit.disabled = false;
+        },
+        "secondary",
+      );
+      b.disabled =
+        !connected ||
+        !machines.some((e) => e.online) ||
+        !{
+          start: ["planned"],
+          pause: ["planned", "running"],
+          resume: ["paused"],
+        }[a].includes(p.status);
+      buttons.append(b);
+    }
+    machine.onchange = () => {
+      action = undefined;
+      submit.disabled = true;
+      preview.textContent = "Machine changed; choose a control again.";
+    };
+    const reason = field("Reason", note);
+    reason.className = "wide";
+    const controls = node("div", undefined, "button-group wide");
+    const expand = button(
+      "Expand editor",
+      () => {
+        const expanded = note.classList.toggle("expanded");
+        expand.textContent = expanded ? "Collapse editor" : "Expand editor";
+        expand.setAttribute("aria-expanded", String(expanded));
+      },
+      "secondary",
+    );
+    expand.setAttribute("aria-expanded", "false");
+    controls.append(expand, submit);
+    form.append(field("Executor", machine), buttons, preview, reason, controls);
+    form.addEventListener("commandconfirmed", (event) => {
+      const sent = event.detail;
+      if (
+        sent.path === "execution" &&
+        sent.body.action === action &&
+        sent.body.note === note.value &&
+        sent.body.executor === machine.value
+      )
+        delete form.dataset.dirty;
+    });
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (!action || !form.reportValidity()) return;
+      const ok = await send("execution", {
+        plat: p.id,
+        executor: machine.value,
+        action,
+        version: p.version,
+        scope_hash: execution.scope_hash,
+        status: p.status,
+        note: note.value,
+      });
+      if (ok) {
+        delete form.dataset.dirty;
+        await refresh(false);
+      }
+    };
+    root.append(form);
+  }
+  root.append(node("h3", "Control requests"));
+  if (!execution.commands.length)
+    root.append(node("p", "No execution controls have been requested."));
+  for (const c of execution.commands) {
+    const item = node("article", undefined, "card");
+    item.append(
+      node(
+        "h4",
+        `${c.action.toUpperCase()} · ${c.state}${c.connection_lost ? " · connection lost; outcome uncertain" : ""}`,
+      ),
+      node("p", `${c.actor} → ${c.executor}`),
+      node("p", c.note, "prose"),
+      node(
+        "p",
+        `Requested ${when(c.requested)} · Acknowledged ${when(c.acknowledged)} · Started ${when(c.started)} · Finished ${when(c.finished)}`,
+        "meta",
+      ),
+      node("p", c.outcome || "Waiting for the owning machine to acknowledge."),
+    );
+    if (c.state === "requested" && member.role !== "viewer")
+      item.append(
+        button(
+          "Cancel queued request",
+          async () => {
+            await send("execution", {
+              action: "cancel",
+              plat: p.id,
+              command: c.id,
+            });
+          },
+          "secondary",
+        ),
+      );
+    root.append(item);
+  }
+  return root;
+}
