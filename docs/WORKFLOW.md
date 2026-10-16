@@ -328,3 +328,45 @@ report as `code.md` with a typed criterion verdict. Supervisor checks and review
 still run; only the mandatory code-diff requirement is waived. Use verifiable
 criteria for the facts being investigated and select `review` for assessment of
 the report. Investigation is distinct from a failed developer producing no diff.
+
+## Plat Room workspace
+
+The authenticated web board now provides **Needs attention, My work, Tickets,
+Products, Engineers, Services, Repositories, Reviews, and Delivery** views. Each
+view groups the same recorded lots. Product/service groups may overlap; the header
+counts distinct tickets and lots once. Shipped work is hidden by default and can
+be included. Grouping, sorting, product scope and search filters are carried in the
+URL fragment, so a teammate can open the same view after authenticating.
+
+Open a ticket to inspect configured phases, budget and recorded spend, readiness,
+acceptance history, criteria, findings, phase attempts, tracked sessions, and the
+latest 200 decisions. Artifact hashes and names identify evidence; raw artifact
+bodies, prompts and transcripts are not exposed by these endpoints. This is an
+artifact manifest, not a shared transcript archive.
+
+Use **Overview → Organize repository** to set product/service labels. Multiple
+labels are supported. Mappings use the recorded repository identity, with
+installation-scoped fallback for legacy work; unmapped repositories appear under
+Unclassified. Updates use an expected version, so conflicting edits fail rather
+than overwrite another person's classification. This classification organizes work;
+it is not a change to the accepted execution scope.
+
+**Coordinate** supports assignments, questions, review requests, notes, responses,
+and reassignment. Select an active team member and ticket/lot scope, then write a
+multiline brief. The editor grows with its contents and can be expanded manually.
+Reassignment preserves its new brief and records the decision. An assignment does
+not transfer execution ownership. Browser polling preserves an unsent room draft;
+leaving a dirty form asks before discarding it.
+
+Saved views are persisted in Postgres. Everyone can save personal views; engineers
+and administrators can share views with the team. Only the owner (or an administrator
+for shared views) can delete them. Viewers cannot classify repositories or issue
+collaboration commands. Unknown mutation outcomes retain the same retry key in
+session storage, scoped to the credential hash; the token itself is kept in memory.
+
+This workspace release does not issue remote execution or deployment commands.
+Start, pause, reconcile, reopen and deploy remain owner-machine CLI operations.
+A disconnected board is explicitly a previous observation, and cannot submit new
+commands until it reconnects. Private executor transport, stable machine identity
+recovery, shared narrative storage and external Jira/PR writes remain subsequent
+milestones.

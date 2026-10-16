@@ -56,3 +56,24 @@ providers with real git, CLI and supervisor commands. They never invoke paid age
 CLIs. Run them against a test database where the test user can create schemas.
 A green mocked-provider suite is not a live CLI capability probe; `plat probe`
 remains the separate check for the installed/authenticated provider versions.
+
+## Workspace browser check
+
+`scripts/check-workspace-browser.cjs` exercises the live team service in a disposable,
+demo-seeded database. It refuses a board containing non-demo anchors. Provide a
+Playwright installation on Node's module path, an installed browser, and a private
+administrator token created in that test database:
+
+```sh
+PLAT_BROWSER_URL=http://127.0.0.1:17318 \
+PLAT_BROWSER_TOKEN_FILE=/path/to/test-admin.token \
+PLAT_BROWSER_CHANNEL=chrome \
+node scripts/check-workspace-browser.cjs
+```
+
+Omit `PLAT_BROWSER_CHANNEL` to use Playwright's installed Chromium. Screenshots go
+to `PLAT_BROWSER_OUTPUT` (default `/tmp`). The check visits each grouped view and
+room tab, expands an assignment draft, tests recovery of a committed command whose
+HTTP response was lost (including a browser reload), and checks mobile overflow.
+It creates a personal saved view in the disposable database. Never point it at a
+working team database.

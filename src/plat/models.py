@@ -157,7 +157,7 @@ class Finding(Base):
     origin_id: Mapped[str] = mapped_column(String(64))   # with (anchor,repo,fingerprint):
     anchor: Mapped[str] = mapped_column(String(160))     #   a stable cross-install identity,
     repo: Mapped[str] = mapped_column(String(128))       #   so corpora can be unioned later
-    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    fingerprint: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(String(16))
     file: Mapped[str] = mapped_column(Text)
     line: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -261,8 +261,11 @@ class Event(Base):
     ts: Mapped[datetime] = _now()
 
 
+# Full fingerprints remain authoritative. Digest/hash indexes avoid btree entry
+# limits for long agent-generated identifiers; neither index enforces uniqueness.
 Index("ix_findings_identity", Finding.origin_id, Finding.anchor,
-      Finding.repo, Finding.fingerprint)
+      Finding.repo, func.md5(Finding.fingerprint))
+Index("ix_findings_fingerprint", Finding.fingerprint, postgresql_using="hash")
 
 
 class ExecutionClaim(Base):
@@ -370,3 +373,20 @@ class TeamInvitation(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     member_id: Mapped[int | None] = mapped_column(ForeignKey('team_members.id'), nullable=True)
     created_at: Mapped[datetime] = _now()
+
+
+class RepositoryCatalog(Base):
+    __tablename__ = 'repository_catalog'
+    identity: Mapped[str] = mapped_column(Text, primary_key=True)
+    products: Mapped[list] = mapped_column(JSONB, default=list)
+    services: Mapped[list] = mapped_column(JSONB, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SavedView(Base):
+    __tablename__ = 'saved_views'
+    id: Mapped[int] = _pk()
+    name: Mapped[str] = mapped_column(String(80))
+    owner: Mapped[str] = mapped_column(String(128))
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    settings: Mapped[dict] = mapped_column(JSONB)

@@ -168,3 +168,14 @@ def localize(anchor: str, lot: str, repo: str, note: str = typer.Option(...)):
             row.config = {**(row.config or {}), "executor_id": cfg.origin_id, "host_id": host_id(), "branch": branch}
         record(db, plat_id=p.id, lot_id=row.id, actor="human", actor_detail=actor(), kind="assignment",
                decision="pending lot localized", rationale=note, inputs={"installation": cfg.origin_id}, apply=apply)
+
+
+@app.command('migrate-host')
+def migrate_host(anchor: str, lot: str, note: str = typer.Option(...)):
+    """Upgrade a local lot's legacy host identity after reconciling any old claim."""
+    from .ownership import migrate_host
+    with DB.session() as db:
+        p = resolve(db, anchor)
+        row = db.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).one()
+        changed = migrate_host(db, load(), p, row, note)
+        output({'lot': row.key, 'migrated': changed})

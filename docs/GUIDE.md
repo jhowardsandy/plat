@@ -585,6 +585,39 @@ fresh coder attempt with the human answer, preserves history, resets the retry
 allowance and invalidates dependent lots and the previous delivery claim. It
 cannot alter shipped work or race an active downstream lot.
 
+### Upgrading a legacy host identity
+
+Plat hashes the operating system's machine identifier, independent of Python,
+network-interface selection, hostname, and `PLAT_HOME`. macOS uses IOPlatformUUID,
+Linux uses `/etc/machine-id`, and Windows uses MachineGuid. The raw identifier is
+never stored in the database. Missing identifiers fail closed. Cloned OS images
+must receive distinct machine identifiers before they execute work.
+
+Older versions hashed the hostname and Python's chosen MAC address. Changing
+Python versions could therefore make a local lot appear to belong to another
+host. Upgrade all local supervisors before resuming execution. Plat can prove
+legacy ownership from the current hostname and locally observed interfaces on
+macOS/Linux; arbitrary caller-supplied aliases are never accepted. If the hostname
+or original interface has changed, legacy recovery refuses the operation.
+
+For an interrupted lot, stop its supervisor and agent, wait for the claim to
+expire, then run on the owning installation:
+
+```bash
+plat workflow reconcile DEV-1234 api --note "Inspected stopped agent and preserved its output"
+plat workflow migrate-host DEV-1234 api --note "Upgrade this laptop to stable OS identity"
+plat reopen DEV-1234 api --note "Recovery instructions and unresolved findings"
+```
+
+For an unstarted lot, only `migrate-host` is needed. Migration refuses active
+claims, unfinished attempts, and attached interactive writers. Finish an old
+interactive session using `plat session attach ... --state completed` (or
+`failed`) before migration. Historical claims, attempts and sessions retain their
+original host IDs, and the binding change is recorded in the decision log.
+Neither reconciliation nor migration starts an agent. Run `plat start` explicitly
+when ready. Older binaries must not be used after migration; their resource locks
+do not understand stable host identities.
+
 All-DONE plus passing run checks means local delivery. ABORTED required work means
 incomplete work. Neither proves deployment or product readiness; full-lifecycle runs add those requirements through `plat workflow`. `plat close --note` records the operator's actual shipment
 statement only after full local delivery.

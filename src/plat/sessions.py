@@ -1,11 +1,12 @@
 """Explicit session provenance. Attached sessions are observations, never gates."""
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 
 from .decisions import record
 from .models import TrackedSession
-from .ownership import actor, host_id
+from .ownership import actor, host_id, local_host_ids
 
 STATES = {'active', 'idle', 'interrupted', 'completed', 'failed', 'unknown'}
 
@@ -29,10 +30,11 @@ def complete(db, attempt, result):
 
 def attach(db, cfg, plat, lot, provider, session_id, *, state='active', note=''):
     from .ownership import interactive_writers, lock_resource
-    resource = lock_resource(db, lot)
+    lock_resource(db, lot)
+    permitted_hosts = local_host_ids() if state in ('completed', 'failed') else {host_id()}
     if (lot.config or {}).get('executor_id') not in (None, cfg.origin_id):
         raise ValueError('attach on the owning installation, or localize a pending lot first')
-    if (lot.config or {}).get('host_id') not in (None, host_id()):
+    if (lot.config or {}).get('host_id') not in (None, *permitted_hosts):
         raise ValueError('attach on the owning host; installation identity must not be copied')
     if provider not in ('claude', 'codex') or state not in STATES or not session_id.strip():
         raise ValueError('attach needs claude/codex, a real provider session ID, and a valid state')
@@ -41,13 +43,14 @@ def attach(db, cfg, plat, lot, provider, session_id, *, state='active', note='')
     row = db.scalars(select(TrackedSession).where(
         TrackedSession.installation == cfg.origin_id, TrackedSession.provider == provider,
         TrackedSession.session_key == session_id).with_for_update()).first()
-    if row and (row.lot_id != lot.id or row.owner != actor() or row.host_id != host_id()):
+    if row and (row.lot_id != lot.id or row.owner != actor() or row.host_id not in permitted_hosts):
         raise ValueError('session is already attached to another lot or owner')
     if row and row.state == state:
         return row
     from .models import ExecutionClaim
     claim = db.scalars(select(ExecutionClaim).where(ExecutionClaim.active.is_(True),
-        (ExecutionClaim.lot_id == lot.id) | (ExecutionClaim.resource == resource))).first()
+        (ExecutionClaim.lot_id == lot.id) | ExecutionClaim.resource.in_([f'{identity}:{Path(lot.worktree_path).resolve()}'
+                                    for identity in local_host_ids()]))).first()
     if state in ('active', 'idle', 'unknown', 'interrupted') and claim and claim.active:
         raise ValueError('automated execution owns this lot; stop and reconcile it before attaching a writer')
     if state in ('active', 'idle', 'unknown', 'interrupted') and any(

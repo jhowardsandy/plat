@@ -161,3 +161,29 @@ CREATE VIEW v_session_status AS
 SELECT id, public_id, lot_id, provider, state, source, last_activity,
        state IN ('active', 'idle') AND last_activity < now() - interval '10 minutes' AS stale
 FROM tracked_sessions;
+
+-- Shared web-workspace signals, including delivered and legacy records.
+CREATE VIEW v_workspace_lots AS
+SELECT l.id AS lot_id,
+       (coalesce(c.reconciliation_required, false) OR coalesce(v.stale, false)
+        OR l.state IN ('BLOCKED', 'ABORTED') OR work.question OR work.review) AS needs_attention,
+       CASE WHEN c.reconciliation_required THEN 'Reconcile on owning executor'
+            WHEN work.question THEN 'Answer outstanding question'
+            WHEN work.review THEN 'Inspect requested review'
+            WHEN l.state = 'BLOCKED' THEN 'Inspect blocker and recovery decision'
+            WHEN l.state = 'ABORTED' THEN 'Inspect stopped work'
+            WHEN coalesce(v.stale, false) THEN 'Inspect stale activity'
+            WHEN p.status = 'closed' THEN 'Inspect delivery record'
+            WHEN l.state = 'DONE' THEN 'Inspect evidence and readiness'
+            WHEN p.status = 'paused' THEN 'Resume on owning executor'
+            WHEN l.state = 'PENDING' THEN 'Await execution on owning executor'
+            ELSE 'Inspect active phase' END AS next_step
+FROM lots l JOIN plats p ON p.id = l.plat_id
+LEFT JOIN v_live_lots v ON v.lot_id = l.id
+LEFT JOIN v_claim_status c ON c.lot_id = l.id
+LEFT JOIN LATERAL (
+  SELECT coalesce(bool_or(i.kind = 'question'), false) AS question,
+         coalesce(bool_or(i.kind = 'review'), false) AS review
+  FROM collaboration_items i WHERE i.plat_id = p.id AND i.state = 'open'
+    AND (i.lot_id IS NULL OR i.lot_id = l.id)
+) work ON true;

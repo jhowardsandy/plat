@@ -17,12 +17,14 @@ from sqlalchemy import select, text
 from .decisions import record
 from .lifecycle import digest, revisions
 from .models import (
+    Attempt,
     CollaborationItem,
     CommandReceipt,
     Event,
     ExecutionClaim,
     Lot,
     Plat,
+    RepositoryCatalog,
     TeamInvitation,
     TeamMember,
     TrackedSession,
@@ -125,6 +127,9 @@ def authenticate(db, token):
 
 
 def board(db):
+    from .workspace import repository_key
+    signals = {r['lot_id']: dict(r) for r in db.execute(text('SELECT * FROM v_workspace_lots')).mappings()}
+    catalog = {r.identity: r for r in db.scalars(select(RepositoryCatalog))}
     plats = db.scalars(select(Plat).order_by(Plat.id.desc())).all()
     out = []
     for p in plats:
@@ -140,17 +145,27 @@ def board(db):
             except (OSError, ValueError, subprocess.CalledProcessError):
                 pass
         from .lifecycle import readiness
-        ready = readiness(db, p) if w and w.stage in ('ready', 'closed') else None
+        ready = readiness(db, p) if w else None
+        attempts = db.scalars(select(Attempt).join(Lot).where(Lot.plat_id == p.id)).all()
         out.append({'readiness': ready, 'id': p.public_id, 'anchor': p.anchor, 'title': p.title, 'status': p.status,
+                    'budget': p.budget_usd, 'spent': sum(a.cost_usd for a in attempts),
+                    'estimated': any(a.cost_estimated for a in attempts),
                     'stage': w.stage if w else 'local development', 'version': w.version if w else 0,
                     'owner': next((i.owner for i in items if i.kind == 'assign' and i.lot_id is None and i.state == 'open'), w.owner if w else None),
                     'lots': [{'id': l.public_id, 'key': l.key, 'repo': l.repo, 'state': l.state,
                               'heartbeat': l.heartbeat_at, 'attempt': l.attempt,
+                              'needs_attention': signals[l.id]['needs_attention'],
+                              'next_step': signals[l.id]['next_step'],
+                              'phases': (l.config or {}).get('phases', []),
+                              'repository': repository_key(l, p),
+                              'classification': ({'products': catalog[repository_key(l, p)].products,
+                                  'services': catalog[repository_key(l, p)].services,
+                                  'version': catalog[repository_key(l, p)].version} if repository_key(l, p) in catalog else {'products': [], 'services': [], 'version': 0}),
                               'owner': next((i.owner for i in items if i.kind == 'assign' and i.lot_id == l.id and i.state == 'open'), None),
                               'executor': claim_summary(db, db.get(ExecutionClaim, l.id))} for l in lots],
-                    'items': [{**item_summary(i), 'stale': i.kind == 'review' and i.body.get('revisions') != current_revisions, 'lot': next((l.key for l in lots if l.id == i.lot_id), 'Entire run')} for i in items],
+                    'items': [{**item_summary(i), 'stale': i.kind == 'review' and i.body.get('revisions') != current_revisions, 'lot_id': next((l.public_id for l in lots if l.id == i.lot_id), None), 'lot': next((l.key for l in lots if l.id == i.lot_id), 'Entire run')} for i in items],
                     'sessions': [{'id': s.public_id, 'owner': s.owner, 'provider': s.provider,
-                                  'state': s.state, 'source': s.source, 'activity': s.last_activity,
+                                  'state': s.state, 'source': s.source, 'lot_id': next((l.public_id for l in lots if l.id == s.lot_id), None), 'activity': s.last_activity,
                                   'observed': True, 'stale': db.scalar(text('SELECT stale FROM v_session_status WHERE id=:id'), {'id': s.id})} for s in sessions]})
     return {'observed_at': datetime.now(timezone.utc), 'plats': out}
 
@@ -249,6 +264,7 @@ def command(db, member, request):
             item.updated_at = datetime.now(timezone.utc)
             if action == 'reassign':
                 item.owner = owner
+                item.body = {**item.body, 'text': note}
             else:
                 item.body = {**item.body, 'answer': note, 'outcome': request.get('outcome'), 'responded_by': member.name}
                 item.state = 'resolved' if action == 'answer' or request.get('outcome') == 'approved' else 'open'
