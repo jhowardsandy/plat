@@ -1,9 +1,7 @@
 """Durable claims plus transaction fencing. Expiry never licenses another writer."""
 from __future__ import annotations
 
-import hashlib
 import os
-import platform
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -22,9 +20,13 @@ class OwnershipError(RuntimeError):
 
 
 def host_id():
-    # Host identity is independent of PLAT_HOME / database / installation.
-    import uuid
-    return hashlib.sha256(f'{platform.node()}:{uuid.getnode()}'.encode()).hexdigest()
+    from .host import machine_id
+    return machine_id()
+
+
+def local_host_ids():
+    from .host import local_ids
+    return local_ids() | {host_id()}
 
 
 def actor():
@@ -41,7 +43,9 @@ def lock_resource(db, lot):
     db.execute(select(Plat.id).where(Plat.id == lot.plat_id).with_for_update())
     host = host_id()
     resource = f'{host}:{Path(lot.worktree_path).resolve()}'
-    _lock(db, resource)
+    # Lock legacy resource names too while old installations are being upgraded.
+    for identity in sorted(local_host_ids()):
+        _lock(db, f'{identity}:{Path(lot.worktree_path).resolve()}')
     _lock(db, f'lot:{lot.id}')
     db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
     db.refresh(lot)
@@ -54,7 +58,7 @@ def interactive_writers(db, lot):
     candidates = db.execute(select(TrackedSession, Lot.worktree_path).join(Lot).where(
         TrackedSession.source == 'interactive',
         TrackedSession.state.in_(['active', 'idle', 'unknown', 'interrupted']),
-        (TrackedSession.lot_id == lot.id) | (TrackedSession.host_id == host_id()))).all()
+        (TrackedSession.lot_id == lot.id) | (TrackedSession.host_id.in_(local_host_ids())))).all()
     path = Path(lot.worktree_path).resolve()
     return [session for session, worktree in candidates
             if session.lot_id == lot.id or Path(worktree).resolve() == path]
@@ -68,10 +72,14 @@ def acquire(db, cfg, plat, lot):
     if configured.get('executor_id') and configured['executor_id'] != cfg.origin_id:
         raise OwnershipError('lot belongs to another installation; localize a pending lot before execution')
     if configured.get('host_id') and configured['host_id'] != host:
+        if configured['host_id'] in local_host_ids():
+            raise OwnershipError('legacy local host identity; reconcile any active claim, then run '
+                                 f'plat workflow migrate-host {plat.anchor} {lot.key} --note <reason>')
         raise OwnershipError('lot belongs to another host; paths and PIDs are not portable')
     claim = db.get(ExecutionClaim, lot.id, populate_existing=True)
     other = db.scalars(select(ExecutionClaim).where(
-        ExecutionClaim.resource == resource, ExecutionClaim.active.is_(True))).first()
+        ExecutionClaim.resource.in_([f'{identity}:{Path(lot.worktree_path).resolve()}'
+                                     for identity in local_host_ids()]), ExecutionClaim.active.is_(True))).first()
     if (claim and claim.active) or other:
         raise OwnershipError('execution already claimed; expired claims require reconciliation on the owning host')
     if interactive_writers(db, lot):
@@ -162,14 +170,14 @@ def reconcile(db, cfg, plat, lot, note):
                        .with_for_update()).first()
     if not claim or not claim.active:
         raise OwnershipError('no active claim to reconcile')
-    if claim.host_id != host_id() or claim.executor_id != cfg.origin_id:
+    if claim.host_id not in local_host_ids() or claim.executor_id != cfg.origin_id:
         raise OwnershipError('reconcile on the owning installation; remote PIDs are never inspected')
     if claim.expires_at > db.scalar(select(func.clock_timestamp())):
         raise OwnershipError('claim is still live; stop the supervisor and wait for its lease to expire')
     pending = db.scalars(select(Attempt).where(Attempt.lot_id == lot.id,
                                              Attempt.finished_at.is_(None))).all()
     for a in pending:
-        if a.host_id and a.host_id != host_id():
+        if a.host_id and a.host_id not in local_host_ids():
             raise OwnershipError('unfinished attempt belongs to another host')
         if a.pid and process_alive(a.pid, (a.role_binding or {}).get('cmd', ''), since=a.started_at):
             raise OwnershipError('an agent is still alive; stop it on this host first')
@@ -186,3 +194,33 @@ def reconcile(db, cfg, plat, lot, note):
     record(db, plat_id=plat.id, lot_id=lot.id, actor='human', actor_detail=actor(), kind='claim',
            decision='expired execution reconciled', rationale=note,
            inputs={'generation': claim.generation}, apply=apply)
+
+
+def migrate_host(db, cfg, plat, lot, note):
+    """Rebind an idle local lot; retain historical attempt and claim provenance."""
+    from .decisions import record
+    if not note.strip():
+        raise OwnershipError('a migration note is required')
+    lock_resource(db, lot)
+    configured = lot.config or {}
+    previous = configured.get('host_id')
+    if configured.get('executor_id') != cfg.origin_id or previous not in local_host_ids():
+        raise OwnershipError('host migration requires local interface evidence and the owning installation')
+    if previous == host_id():
+        return False
+    claims = db.scalars(select(ExecutionClaim).where(
+        ExecutionClaim.active.is_(True),
+        (ExecutionClaim.lot_id == lot.id) | ExecutionClaim.resource.in_(
+            [f'{identity}:{Path(lot.worktree_path).resolve()}' for identity in local_host_ids()]))).all()
+    if claims:
+        raise OwnershipError('stop and reconcile active execution before migrating host identity')
+    if db.scalar(select(Attempt.id).where(Attempt.lot_id == lot.id,
+                                        Attempt.finished_at.is_(None)).limit(1)):
+        raise OwnershipError('reconcile unfinished attempts before migrating host identity')
+    if interactive_writers(db, lot):
+        raise OwnershipError('finish attached interactive sessions before migrating host identity')
+    record(db, plat_id=plat.id, lot_id=lot.id, actor='human', actor_detail=actor(),
+           kind='assignment', decision='local host identity upgraded', rationale=note,
+           inputs={'previous_host': previous, 'host': host_id(), 'installation': cfg.origin_id},
+           apply=lambda: setattr(lot, 'config', {**configured, 'host_id': host_id()}))
+    return True
