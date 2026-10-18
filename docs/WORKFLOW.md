@@ -364,9 +364,73 @@ for shared views) can delete them. Viewers cannot classify repositories or issue
 collaboration commands. Unknown mutation outcomes retain the same retry key in
 session storage, scoped to the credential hash; the token itself is kept in memory.
 
-This workspace release does not issue remote execution or deployment commands.
-Start, pause, reconcile, reopen and deploy remain owner-machine CLI operations.
-A disconnected board is explicitly a previous observation, and cannot submit new
-commands until it reconnects. Private executor transport, stable machine identity
-recovery, shared narrative storage and external Jira/PR writes remain subsequent
-milestones.
+The Execution tab supports authenticated Start, Pause and Resume requests with
+machine acknowledgements and recorded outcomes (see below). Reconcile, reopen,
+and deploy remain owner-machine CLI operations. A disconnected board is explicitly
+a previous observation and cannot submit new commands until it reconnects.
+Service-only runner transport, shared narrative storage and external Jira/PR writes
+remain subsequent milestones.
+
+
+## Authenticated executor controls
+
+Upgrade all local Plat processes and run `plat init` before enabling this feature.
+The machine must already have its normal Plat database, repository, role, and
+provider configuration. Register it locally with a distinct private credential:
+
+```sh
+plat executor register "Justin's laptop" --token-file ~/.plat/team/executor.token
+plat executor serve --url http://127.0.0.1:7318 --token-file ~/.plat/team/executor.token
+```
+
+Registration is trusted database administration, not public team self-enrollment.
+The machine credential cannot authenticate as a team member; a member credential
+cannot poll or acknowledge executor commands. Remote service URLs require HTTPS;
+redirects are refused to protect bearer credentials. Token files must be private.
+
+In a ticket room, open **Execution**, select the matching online machine, choose
+Start/Pause/Resume, inspect the preview, provide a reason, and submit. Engineers
+and administrators can issue requests; viewers can inspect their history. All lots
+must be assigned to the selected installation and stable host. Assigning an engineer
+does not transfer machine ownership. Runs spanning several executors are not yet
+supported by these controls.
+
+Start is available for planned work; Resume for paused work. Both revalidate the
+workflow version, run status, previewed plan/budget hash, accepted specification, lot states, claims, interactive
+writers and role configuration before execution. They use the same independent gates
+and serial runner as local execution. Requests never contain a shell command. A CLI
+start refuses to race an outstanding browser request. Reopen/reconcile stopped work
+locally before requesting a new start.
+
+The visible command lifecycle is:
+
+- **requested**: durable request; no machine acknowledgement yet. It can be cancelled.
+- **acknowledged**: owning machine received it; no execution success is implied.
+- **running**: the local worker entered the runner.
+- **completed**: the control finished. Read its outcome and lot states; this does not
+  mean delivery or product readiness. A completed Pause allows in-flight agents to finish.
+- **failed/cancelled**: rejected preflight, explicit local reconciliation, or cancellation.
+- **uncertain**: a worker crashed or an executor was replaced with unfinished commands.
+  Execution is never automatically replayed. A lost heartbeat is also shown explicitly.
+
+A request expires after five minutes before acknowledgement. Only one executor process
+holds a machine's 30-second heartbeat lease. HTTP retries retain the original request
+identity; a consumed execution cannot run twice. A replacement daemon quarantines
+unresolved acknowledgements instead of guessing whether a subprocess started.
+
+Stop the daemon before local command reconciliation and wait for its lease to expire.
+Inspect the worker and reconcile any unfinished lot claims first, then:
+
+```sh
+plat executor reconcile <command-public-id> --note "Inspected stopped worker and reconciled its claims"
+```
+
+To revoke a credential use `plat executor revoke`. This stops future control delivery,
+not in-flight agents. To replace a lost or revoked credential, stop the old daemon,
+wait for its lease, cancel/reconcile outstanding commands, then register with `--rotate`
+and a new token-file path. Historical requests remain associated with the same machine.
+
+The control channel uses authenticated HTTP. The runner still connects directly to the
+team database using the installation's existing trusted SQL credentials. This is not
+an untrusted multi-tenant executor sandbox or a service-only runner transport. Logs
+remain private on the owning machine beside its token file under `logs/`.

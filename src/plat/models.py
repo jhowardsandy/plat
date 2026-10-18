@@ -390,3 +390,38 @@ class SavedView(Base):
     owner: Mapped[str] = mapped_column(String(128))
     shared: Mapped[bool] = mapped_column(Boolean, default=False)
     settings: Mapped[dict] = mapped_column(JSONB)
+
+
+class Executor(Base):
+    __tablename__ = 'executors'
+    __table_args__ = (UniqueConstraint('installation', 'host_id', name='uq_executor_machine'),)
+    id: Mapped[int] = _pk()
+    name: Mapped[str] = mapped_column(String(80))
+    installation: Mapped[str] = mapped_column(String(64))
+    host_id: Mapped[str] = mapped_column(String(64))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    session: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ExecutionCommand(Base):
+    __tablename__ = 'execution_commands'
+    id: Mapped[int] = _pk()
+    plat_id: Mapped[int] = mapped_column(ForeignKey('plats.id'), index=True)
+    executor_id: Mapped[int] = mapped_column(ForeignKey('executors.id'), index=True)
+    actor: Mapped[str] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(Integer)
+    expected_status: Mapped[str] = mapped_column(String(24))
+    scope_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(24), default='requested')
+    delivery_session: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    requested_at: Mapped[datetime] = _now()
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(Text, default='')

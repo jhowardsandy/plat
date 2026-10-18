@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import db as DB
-from . import team, workspace
+from . import executor, team, workspace
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -54,8 +54,21 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('command must be an object')
             with DB.session() as db:
                 joining = method == 'POST' and url.path == '/api/join'
-                member = None if joining else team.authenticate(db, auth[7:] if auth.startswith('Bearer ') else '')
-                if joining:
+                machine_route = method == 'POST' and url.path.startswith('/api/executor/')
+                credential = auth[7:] if auth.startswith('Bearer ') else ''
+                machine = executor.authenticate(db, credential) if machine_route else None
+                member = None if joining or machine_route else team.authenticate(db, auth[7:] if auth.startswith('Bearer ') else '')
+                if machine_route:
+                    if url.path == '/api/executor/poll':
+                        result = executor.poll(db, machine, body.get('session'))
+                    elif url.path in ('/api/executor/ack', '/api/executor/abandon'):
+                        result = executor.acknowledge(db, machine, body.get('command'), body.get('session'),
+                                                      abandon=url.path.endswith('/abandon'))
+                    else:
+                        raise ValueError('unknown executor operation')
+                elif method == 'POST' and url.path == '/api/execution':
+                    result = executor.request(db, member, body)
+                elif joining:
                     result = team.join(db, body.get('code'), body.get('token'))
                 elif method == 'POST' and url.path == '/api/invitations':
                     result = team.invite(db, member, body.get('name'), body.get('role', 'engineer'), body.get('hours', 24))

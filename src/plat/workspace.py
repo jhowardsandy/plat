@@ -111,7 +111,9 @@ def room(db, public_id):
         raise ValueError('plat not found')
     attempts = db.scalars(select(Attempt).join(Lot).where(Lot.plat_id == p.id).order_by(Attempt.id)).all()
     ids = [a.id for a in attempts]
+    from .executor import room as execution_room
     return {
+        'execution': execution_room(db, p),
         'attempts': [{'id': a.id, 'lot': db.get(Lot, a.lot_id).key, 'phase': a.phase,
                       'attempt': a.n, 'provider': a.provider, 'model': a.model,
                       'exit_code': a.exit_code, 'started': a.started_at, 'finished': a.finished_at,

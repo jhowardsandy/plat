@@ -53,6 +53,7 @@ const fs = require("fs");
     "Sessions",
     "Decisions",
     "Coordinate",
+    "Execution",
     "Overview",
   ])
     await page.getByRole("button", { name, exact: true }).click();

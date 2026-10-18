@@ -78,7 +78,7 @@ def test_upgrade_preserves_existing_fingerprint(case):
                 db.flush()
             command.upgrade(config, 'head')
             assert connection.scalar(text('SELECT fingerprint FROM findings')) == 'original:identity'
-            assert connection.scalar(text('SELECT version_num FROM alembic_version')) == '0007'
+            assert connection.scalar(text('SELECT version_num FROM alembic_version')) == '0009'
             connection.execute(text("UPDATE findings SET fingerprint = :value"), {'value': 'long:' + 'x' * 107})
             command.upgrade(config, 'head')
             assert connection.scalar(text('SELECT fingerprint FROM findings')) == 'long:' + 'x' * 107

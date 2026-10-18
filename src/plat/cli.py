@@ -18,6 +18,7 @@ from . import prompts as P
 from . import roles as R
 from .adapters import run as run_agent
 from .config import load
+from .executor_cli import app as executor_app
 from .fsm import LotState
 from .models import Artifact, Attempt, Criterion, Decision, Lot, Plat
 from .team_cli import app as team_app
@@ -27,6 +28,7 @@ from .workflow_cli import session_app
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False,
                   help="Plat - one ticket, many lots, one instrument.")
 app.add_typer(team_app, name="team")
+app.add_typer(executor_app, name="executor")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(session_app, name="sessions")
 
@@ -727,6 +729,11 @@ def start(anchor: str, workers: int = typer.Option(1, min=1, max=16),
         if p.status in ("closed", "aborted", "paused"):
             c.print(f"{p.anchor} is {p.status}; resume paused work or reopen a stopped lot explicitly")
             raise typer.Exit(1)
+        from .executor import OPEN
+        from .models import ExecutionCommand
+        if s.scalar(select(ExecutionCommand.id).where(ExecutionCommand.plat_id == p.id,
+                                                      ExecutionCommand.state.in_(OPEN)).limit(1)):
+            raise typer.BadParameter("browser execution request outstanding; cancel or reconcile it before a CLI start")
         from .lifecycle import require_accepted
         require_accepted(s, p)
         lots = runner.ordered_lots(

@@ -72,5 +72,6 @@ jobs:
           plat top --help > /dev/null
           plat review --help > /dev/null
           plat workflow --help > /dev/null
+          plat executor --help > /dev/null
           plat team join --help > /dev/null
           plat sessions --help > /dev/null

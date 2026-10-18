@@ -35,7 +35,7 @@ def session() -> Session:
 
 
 VIEWS = ["v_live_lots", "v_plat_summary", "v_decision_tree",
-         "v_delivered_plats", "v_reviews", "v_claim_status", "v_session_status", "v_workspace_lots"]
+         "v_delivered_plats", "v_reviews", "v_claim_status", "v_session_status", "v_workspace_lots", "v_execution_command_status", "v_executor_status"]
 
 ADDITIVE = [
     "ALTER TABLE criteria ADD COLUMN IF NOT EXISTS scope varchar(8) DEFAULT 'lot' NOT NULL",

@@ -686,6 +686,9 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
         res = base.AgentResult(ok=False, exit_code=-1, duration_s=0,
                                provider=role.provider, error=str(exc))
     _chunk("\n")  # flush the last unterminated provider event
+    # Lock the parent before result writes acquire foreign-key KEY SHARE locks.
+    # Two result transactions must not both upgrade those locks in fence().
+    db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
     # PID and abort updates were committed by other sessions. Refresh before
     # clearing: assigning None to a cached None would leave the real PID behind.
     db.execute(select(Lot.id).where(Lot.id == lot.id).with_for_update())
