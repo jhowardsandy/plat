@@ -353,3 +353,35 @@ def test_pause_preview_is_not_invalidated_by_agent_progress(case):
         lot = db.scalars(select(Lot)).one()
         lot.config = {**lot.config, 'observed_revision': {'commit': 'updated'}, 'observed_at': 'now'}
         assert executor.acknowledge(db, e, reply['id'], session)['state'] == 'acknowledged'
+
+
+def test_cancel_between_poll_and_ack_keeps_daemon_connected(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from urllib.error import HTTPError
+
+    from plat import executor_cli
+
+    token = tmp_path / 'executor.token'
+    token.write_text('machine-secret')
+    token.chmod(0o600)
+    monkeypatch.setattr(executor_cli, 'load', lambda: SimpleNamespace(origin_id='test'))
+    monkeypatch.setattr(executor_cli, 'host_id', lambda: 'host')
+    calls = []
+
+    def post(url, credential, path, body):
+        calls.append(path)
+        if path.endswith('/ack'):
+            raise HTTPError(url, 409, 'command cancelled', {}, None)
+        if calls.count('/api/executor/poll') == 2:
+            raise KeyboardInterrupt
+        return {'installation': 'test', 'host': 'host', 'commands': ['cancelled']}
+
+    def spawn(*args, **kwargs):
+        pytest.fail('a cancelled command must never spawn')
+
+    monkeypatch.setattr(executor_cli, '_post', post)
+    monkeypatch.setattr(executor_cli.subprocess, 'Popen', spawn)
+    monkeypatch.setattr(executor_cli.time, 'sleep', lambda _: None)
+    with pytest.raises(KeyboardInterrupt):
+        executor_cli.serve(token_file=token)
+    assert calls == ['/api/executor/poll', '/api/executor/ack', '/api/executor/poll']

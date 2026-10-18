@@ -126,7 +126,14 @@ def serve(url: str = 'http://127.0.0.1:7318', token_file: Path = typer.Option(..
             for command in reply['commands']:
                 if command in launched:
                     continue
-                ack = _post(url, token, '/api/executor/ack', {'session': session, 'command': command})
+                try:
+                    ack = _post(url, token, '/api/executor/ack', {'session': session, 'command': command})
+                except HTTPError as exc:
+                    if exc.code != 409:
+                        raise
+                    # Cancellation may win between poll and ACK. Poll again to
+                    # verify the lease; never spawn a command without its ACK.
+                    continue
                 if ack['state'] != 'acknowledged':
                     continue
                 # A duplicate or delayed spawn cannot rerun a command: execute()
