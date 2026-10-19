@@ -21,6 +21,19 @@ Every field shown without a comment is REQUIRED. Integers must be integers, neve
 `null` — if you did not run the tests, write `"ran": false` with `"passed": 0,
 "failed": 0`.
 
+### Review, docs and quality verdicts
+
+For phases with a `verdict` field:
+- `pass` requires `findings: []` and every owned criterion met. Never return pass
+  with findings, even low-severity ones. The supervisor rejects that contradiction.
+- `changes_requested` means a required change in the current scope. Each finding
+  must describe an actionable required fix with a stable fingerprint.
+- `blocked` means a human decision is needed; include `blocking_question`.
+- Optional improvements and future rollout checks belong in the narrative, clearly
+  labeled as outstanding, not in findings. Do not hide a genuine required fix there.
+
+Before writing JSON, check that the verdict, findings and criterion results agree.
+
 ### Reporting decisions
 
 Populate `decisions[]` ONLY where a real alternative existed and the choice was

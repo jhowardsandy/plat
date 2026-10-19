@@ -132,6 +132,25 @@ def upstream_handoff(db, plat, lot) -> list[dict]:
     return out
 
 
+def companion_evidence(db, plat, lot) -> list[dict]:
+    """Recorded cross-lot context without reading remote checkouts or sibling plans."""
+    result = []
+    for sibling in db.scalars(select(Lot).where(
+            Lot.plat_id == plat.id, Lot.id != lot.id).order_by(Lot.key)):
+        code = _latest(db, sibling, phases=["code"])
+        gate = _latest(db, sibling, phases=["gate"])
+        result.append({
+            "lot": sibling.key, "repo": sibling.repo, "state": sibling.state,
+            "observed_revision": (sibling.config or {}).get("observed_revision"),
+            "observed_at": (sibling.config or {}).get("observed_at"),
+            "reported_handoff": (_verdict_of(db, code) or {}).get("handoff", []),
+            "gate_attempt": gate.id if gate else None,
+            "gate_finished_at": gate.finished_at if gate else None,
+            "gate_evidence": _verdict_of(db, gate) if gate else None,
+        })
+    return result
+
+
 def ordered_lots(lots) -> list:
     """Dependencies before dependents, insertion order otherwise.
 
@@ -612,7 +631,8 @@ def _run_agent(db, cfg, plat, lot, roles_cfg, nxt, parent, log, out_dir=None) ->
                 prompt += "\n## Investigation evidence\n" + evidence.body
     if nxt.phase in ("docs", "quality"):
         prompt = P.build_support(nxt.phase, lot, plat, wt, crit,
-                                 _verdict_of(db, _latest(db, lot, phases=["gate"])) or {}, out)
+                                 _verdict_of(db, _latest(db, lot, phases=["gate"])) or {}, out,
+                                 companions=companion_evidence(db, plat, lot))
     if lot.human_note:
         prompt += "\n## Human decision for this attempt\n\n" + lot.human_note + "\n"
     if nxt.phase == "code":

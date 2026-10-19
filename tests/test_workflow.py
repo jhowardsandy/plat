@@ -540,3 +540,59 @@ def test_cancellation_prevents_further_deployment_commands(case,monkeypatch):
             L.deploy(db,case.cfg,p,{'environment':'local','lot':'a','artifact':'fixture',
                 'deploy':'deploy-command','smoke':'smoke-command','rollback':'rollback-command'},w.version)
     assert calls==['deploy-command']
+
+
+@pytest.mark.parametrize('phase,role', [('docs', 'documenter'), ('quality', 'reviewer.quality')])
+def test_support_pass_with_findings_still_blocks(case, monkeypatch, phase, role):
+    from plat import adapters
+    from plat.adapters.base import AgentResult
+    cfg = yaml.safe_load(case.cfg.roles_path.read_text())
+    cfg['roles'][role] = {'provider': 'claude', 'model': 'default'}
+    case.cfg.roles_path.write_text(yaml.safe_dump(cfg))
+
+    def fake(binding, prompt_file, cwd, **kwargs):
+        if binding.name != role:
+            return case.fake(binding, prompt_file, cwd, **kwargs)
+        prompt = prompt_file.read_text()
+        assert 'pass` requires `findings: []' in prompt
+        assert 'Shared metric contract' in prompt and 'Implement producer' in prompt
+        (prompt_file.parent / (phase + '.md')).write_text('Optional observation incorrectly classified')
+        (prompt_file.parent / (phase + '.json')).write_text(json.dumps({
+            'verdict': 'pass', 'findings': [{'id': 'f1', 'fingerprint': 'app:optional:note',
+                'severity': 'low', 'file': 'app.txt', 'claim': 'Optional note', 'required_fix': 'Add note'}],
+            'criteria_check': [{'id': 'AC1', 'met': True}]}))
+        return AgentResult(True, 0, .1, provider=binding.provider)
+
+    monkeypatch.setattr(adapters, 'run', fake)
+    spec = valid_spec(phases=['code', 'review', phase], plat_map='Shared metric contract')
+    spec['lots'][0]['plan'] = 'Implement producer'
+    plan(case, spec)
+    start()
+    assert rows(Lot)[0].state == 'BLOCKED'
+    assert rows(Plat)[0].delivered_at is None
+
+
+def test_companion_evidence_includes_independent_lots_without_remote_reads(case):
+    from plat.models import Verdict
+    plan(case)
+    with DB.session() as db:
+        own = db.scalars(select(Lot)).one()
+        plat = db.get(Plat, own.plat_id)
+        sibling = Lot(plat_id=plat.id, key='consumer', repo='remote/consumer',
+                      worktree_path='/does-not-exist-on-this-host', state='BLOCKED',
+                      config={'plan': 'SIBLING PRIVATE PLAN', 'observed_revision': {'commit': 'abc'}})
+        db.add(sibling)
+        db.flush()
+        code = Attempt(lot_id=sibling.id, phase='code', n=1, provider='claude', model='default')
+        gate = Attempt(lot_id=sibling.id, phase='gate', n=1, provider='system', model='gate')
+        db.add_all([code, gate])
+        db.flush()
+        db.add_all([Verdict(attempt_id=code.id, raw={'handoff': [{'kind': 'other', 'name': 'metric', 'detail': 'reported'}]}),
+                    Verdict(attempt_id=gate.id, raw={'exit_code': 1, 'tests_failed': 1})])
+        db.flush()
+        evidence = runner.companion_evidence(db, plat, own)
+        assert len(evidence) == 1 and evidence[0]['state'] == 'BLOCKED'
+        assert evidence[0]['gate_evidence']['exit_code'] == 1
+        assert evidence[0]['reported_handoff'][0]['name'] == 'metric'
+        assert 'SIBLING PRIVATE PLAN' not in json.dumps(evidence, default=str)
+        assert own.depends_on == []

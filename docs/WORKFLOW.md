@@ -85,6 +85,15 @@ assesses maintainability, security boundaries, recovery and coverage. Both phase
 have their own prompts, contracts, provider-failure handling and worktree-mutation
 checks. Configure the `documenter` and `reviewer.quality` roles before enabling them.
 
+Docs and quality receive the approved master plan, their own lot scope, and
+recorded companion-lot states, reported handoffs, and historical gate evidence,
+including independent lots without ordering dependencies. These records are not
+proof of current revisions, merged PRs, or deployment; remote checkouts are not
+read. Required current-scope fixes use `changes_requested`. `pass` requires an
+empty findings list. Optional observations and later merge/deployment dependencies
+belong in the narrative, explicitly outstanding. Missing required evidence and
+real contract conflicts still block acceptance.
+
 ```sh
 plat start DEV-123 --workers 3
 plat start DEV-123 --dispatcher celery --workers 3
