@@ -228,3 +228,22 @@ def test_converge_with_review_disabled_closes_on_the_objective():
     n = decide(LotState.GATE, 2, Ctx(**CONV, gate=_cg(), progress=(81.,),
                                      phases=frozenset({"code"})))
     assert n.kind == "close" and n.state == LotState.DONE
+
+
+def test_budget_allows_only_already_verified_completion():
+    from dataclasses import replace
+    for state, phases in [
+        (LotState.REVIEWING, frozenset({'code', 'review'})),
+        (LotState.DOCS, frozenset({'code', 'review', 'docs'})),
+        (LotState.QUALITY, frozenset({'code', 'review', 'docs', 'quality'})),
+    ]:
+        ctx = Ctx(deps_met=True, verdict=PASS, gate=GOOD_GATE, phases=phases,
+                  budget_exhausted=True)
+        assert decide(state, 1, ctx).kind == 'close'
+        for verdict, gate in [(None, GOOD_GATE), (CR, GOOD_GATE), (UNMET, GOOD_GATE), (PASS, BAD_GATE)]:
+            assert decide(state, 1, replace(ctx, verdict=verdict, gate=gate)).kind == 'human'
+    ctx = Ctx(deps_met=True, verdict=PASS, gate=GOOD_GATE,
+              phases=frozenset({'code', 'review', 'docs', 'quality'}), budget_exhausted=True)
+    for state in (LotState.PENDING, LotState.CODING, LotState.GATE, LotState.REVIEWING, LotState.DOCS):
+        assert decide(state, 1, ctx).kind == 'human'
+    assert decide(LotState.QUALITY, 1, replace(ctx, paused=True)).kind == 'noop'

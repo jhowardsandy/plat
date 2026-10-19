@@ -232,7 +232,8 @@ def test_http_authentication_read_only_and_replay(case):
         server.shutdown(); server.server_close(); thread.join()
 
 
-def test_full_phase_contracts(case, monkeypatch):
+@pytest.mark.parametrize('budget', [0, .35])
+def test_full_phase_contracts(case, monkeypatch, budget):
     from plat import adapters
     cfg = yaml.safe_load(case.cfg.roles_path.read_text())
     cfg['roles']['documenter'] = {'provider':'claude', 'model':'default'}
@@ -248,7 +249,7 @@ def test_full_phase_contracts(case, monkeypatch):
             return AgentResult(True, 0, .1, provider=role.provider)
         return case.fake(role, prompt_file, cwd, **kwargs)
     monkeypatch.setattr(adapters, 'run', fake)
-    plan(case, valid_spec(phases=['code','review','docs','quality']))
+    plan(case, valid_spec(phases=['code','review','docs','quality'], budget_usd=budget))
     start()
     assert [a.phase for a in rows(Attempt)] == ['code','gate','review','docs','quality']
     assert rows(Lot)[0].state == 'DONE'

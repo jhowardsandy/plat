@@ -443,3 +443,9 @@ The control channel uses authenticated HTTP. The runner still connects directly 
 team database using the installation's existing trusted SQL credentials. This is not
 an untrusted multi-tenant executor sandbox or a service-only runner transport. Logs
 remain private on the owning machine beside its token file under `logs/`.
+
+
+Budget ceilings stop further dispatch between phases; an in-flight provider call
+can cross the ceiling. A final passing phase may still mark the lot DONE using
+its existing gate and verdict evidence, without another agent call. This does not
+make an overrun disappear or imply that usage dollars are actual API charges.

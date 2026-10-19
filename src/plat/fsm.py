@@ -7,7 +7,7 @@ Never "read this and decide what to do."
 from __future__ import annotations
 
 import operator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -214,6 +214,11 @@ def decide(state: LotState, attempt: int, ctx: Ctx) -> Next:
             return Next("human", LotState.BLOCKED, reason="coder blocked: " + "; ".join(questions),
                         inputs={"verdict": ctx.verdict})
     if ctx.budget_exhausted:
+        # An in-flight final phase can cross the ceiling. Its independently
+        # verified completion costs nothing; never dispatch further work here.
+        completion = decide(state, attempt, replace(ctx, budget_exhausted=False))
+        if completion.kind == "close":
+            return completion
         return Next("human", LotState.BLOCKED, reason="budget ceiling reached")
     if ctx.mode == Mode.CONVERGE:
         return _converge(state, attempt, ctx)
