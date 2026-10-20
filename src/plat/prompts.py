@@ -217,10 +217,19 @@ The current reading is **{last}**. Two rules about it:
 """
 
 
-def build_support(phase, lot, plat, wt, criteria, gate, out):
+def build_support(phase, lot, plat, wt, criteria, gate, out, *, companions=None):
     import json
+    context = ("## Approved master plan\n" + (lot.config or {}).get("plat_map", "_not supplied_")
+               + "\n\n## This lot scope\n" + (lot.config or {}).get("plan", "_not supplied_")
+               + "\n\n## Diff base\n" + str(lot.base_ref or "HEAD")
+               + "\n\n## Companion lot records (historical, not merge/deploy proof)\n"
+               + json.dumps(companions or [], indent=2, default=str)
+               + "\nThese records may be stale. Reported handoffs are agent claims; gate results are\n"
+                 "independently observed at the recorded time, not proof of current revisions.\n"
+                 "Do not inspect another host or assume its checkout exists locally.\n")
     return (_t(phase + ".md").replace("{anchor}", plat.anchor)
             .replace("{lot}", lot.key).replace("{worktree}", str(wt))
+            .replace("{context}", context)
             .replace("{criteria}", criteria_block(criteria))
             .replace("{gate}", json.dumps(gate, indent=2))
             .replace("{termination}", termination(out, phase)))
