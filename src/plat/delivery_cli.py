@@ -1,5 +1,6 @@
 """Read external delivery status through the owner's existing provider login."""
 import json
+from pathlib import Path
 
 import typer
 from sqlalchemy import select
@@ -45,4 +46,28 @@ def refresh(anchor: str, lot: str):
 @app.command()
 def status(anchor: str):
     with DB.session() as db:
-        output(delivery.project(db, resolve(db, anchor)))
+        from . import delivery_actions
+        p = resolve(db, anchor)
+        output({**delivery.project(db, p), 'actions': delivery_actions.project(db, p)})
+
+
+@app.command('publish-integration')
+def publish_integration(anchor: str, file: Path = typer.Option(..., exists=True),
+                        version: int = typer.Option(0)):
+    """Share exact integration commands with the team and enable Room execution."""
+    from . import delivery_actions
+    from .workflow_cli import input_file
+    with DB.session() as db:
+        output(delivery_actions.publish_recipe(db, load(), resolve(db, anchor), input_file(file), version))
+
+
+@app.command('share-package')
+def share_package(anchor: str, file: Path = typer.Option(..., exists=True),
+                  version: int = typer.Option(0)):
+    """Explicitly share six package narrative fields, bound to current revisions."""
+    from . import delivery_actions
+    from .workflow_cli import input_file
+    with DB.session() as db:
+        data = input_file(file)
+        output(delivery_actions.share_package(db, resolve(db, anchor),
+            {k: data.get(k) for k in delivery_actions.FIELDS}, version, actor()))

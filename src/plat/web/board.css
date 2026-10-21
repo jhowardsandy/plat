@@ -295,3 +295,7 @@ a {
   background: var(--brand);
   color: var(--onbrand);
 }
+
+.delivery-shared .meta {
+  overflow-wrap: anywhere;
+}

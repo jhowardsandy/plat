@@ -672,7 +672,7 @@ function renderRoom() {
       ),
     );
   } else if (roomTab === "delivery") {
-    root.append(deliveryPanel(p, r.delivery), executionControls(p, r.execution, true));
+    root.append(deliveryPanel(p, r.delivery), sharedDelivery(p, r.delivery_actions), executionControls(p, r.execution, true, r.delivery_actions));
   } else if (roomTab === "execution") {
     root.append(executionControls(p, r.execution));
   } else if (roomTab === "evidence") {
@@ -972,7 +972,7 @@ window.addEventListener("beforeunload", (e) => {
 });
 setInterval(() => refresh(false), 15000);
 
-function executionControls(p, execution, deliveryOnly = false) {
+function executionControls(p, execution, deliveryOnly = false, shared = {}) {
   const root = node("section");
   const machines = execution.executors.filter((e) => e.matches);
   root.append(node("h3", "Owning machine"));
@@ -992,7 +992,7 @@ function executionControls(p, execution, deliveryOnly = false) {
   root.append(
     node(
       "p",
-      deliveryOnly ? "Refresh requests use the owning machine’s provider login. Acknowledged means received; completed means status was collected, not that CI passed. No agents or workflow changes." : "Requests are authenticated and recorded. Acknowledged means the machine received the request; completed means the control finished, not that the ticket is delivered. Pause allows in-flight agents to finish.",
+      deliveryOnly ? "Actions run on the owning machine. Acknowledged means received; completed means the requested operation finished. Review the shared content and exact recipe before requesting. Integration executes the published shell checks; package recording prepares the deployment stage." : "Requests are authenticated and recorded. Acknowledged means the machine received the request; completed means the control finished, not that the ticket is delivered. Pause allows in-flight agents to finish.",
       "meta",
     ),
   );
@@ -1024,15 +1024,17 @@ function executionControls(p, execution, deliveryOnly = false) {
     const submit = node("button", "Review a control first");
     submit.type = "submit";
     submit.disabled = true;
-    for (const a of deliveryOnly ? ["refresh_delivery"] : ["start", "pause", "resume"]) {
+    for (const a of deliveryOnly ? ["refresh_delivery", "integrate", "record_package"] : ["start", "pause", "resume"]) {
       const b = button(
-        a === "refresh_delivery" ? "Refresh PR / CI status" : a[0].toUpperCase() + a.slice(1),
+        a === "refresh_delivery" ? "Refresh PR / CI status" : a === "integrate" ? "Run integration" : a === "record_package" ? "Record package" : a[0].toUpperCase() + a.slice(1),
         () => {
           action = a;
           form.dataset.dirty = "true";
           preview.textContent = `${a.toUpperCase()} ${p.anchor} on ${machines.find((e) => e.id === machine.value)?.name}. Workflow v${p.version}; ${execution.scope.lots.length} lot(s) (${execution.scope.lots.map((l) => l.key + ": " + l.phases.join(" → ")).join("; ")}); ${p.budget ? money(execution.scope.budget) + " approximate budget" : "unbounded budget"}. ${a === "pause" ? "Current agents may finish; no new phase should start." : "Launch the configured phases serially using the machine's logged-in provider accounts."}`;
           if (a === "refresh_delivery") preview.textContent = `Refresh ${execution.delivery_targets.length} linked PR/MR(s) on ${machines.find(e => e.id === machine.value)?.name}: ${execution.delivery_targets.map(t => t.lot + " · " + t.url).join("; ")}. Read provider status using that laptop's login. No agents, external writes, or workflow changes.`;
-          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : "Request " + a;
+          if (a === "integrate") preview.textContent = `Run the owner-published integration recipe on ${machines.find(e => e.id === machine.value)?.name}. Recipe ${shared.integrate.version}; SHA-256 ${shared.integrate.sha256}. Commands: ${shared.integrate.checks.map(c => c.name + " (" + c.lot + "): " + c.cmd).join("; ")}. This executes the published shell checks with the machine's permissions and records independent evidence. It does not invoke Plat's deployment workflow.`;
+          if (a === "record_package") preview.textContent = `Record the shared package draft ${shared.record_package.version}, SHA-256 ${shared.record_package.sha256}, on ${machines.find(e => e.id === machine.value)?.name}. The owner verifies current revisions and successful integration before advancing to deployment. This does not deploy.`;
+          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : a === "integrate" ? "Request integration" : a === "record_package" ? "Request package recording" : "Request " + a;
           submit.disabled = false;
         },
         "secondary",
@@ -1045,6 +1047,8 @@ function executionControls(p, execution, deliveryOnly = false) {
           pause: ["planned", "running"],
           resume: ["paused"],
           refresh_delivery: execution.delivery_targets.length ? ["planned", "running", "paused", "delivered"] : [],
+          integrate: shared.integrate && ["development", "integration", "recording", "deployment", "validation", "ready"].includes(p.stage) ? ["delivered"] : [],
+          record_package: shared.record_package && p.stage === "recording" ? ["delivered"] : [],
         }[a].includes(p.status);
       buttons.append(b);
     }
@@ -1086,7 +1090,7 @@ function executionControls(p, execution, deliveryOnly = false) {
         executor: machine.value,
         action,
         version: p.version,
-        scope_hash: action === "refresh_delivery" ? execution.delivery_scope_hash : execution.scope_hash,
+        scope_hash: action === "refresh_delivery" ? execution.delivery_scope_hash : execution.action_scope_hashes[action] || execution.scope_hash,
         status: p.status,
         note: note.value,
       });
@@ -1098,9 +1102,9 @@ function executionControls(p, execution, deliveryOnly = false) {
     root.append(form);
   }
   root.append(node("h3", "Control requests"));
-  if (!execution.commands.some(c => !deliveryOnly || c.action === "refresh_delivery"))
-    root.append(node("p", deliveryOnly ? "No provider refresh has been requested." : "No execution controls have been requested."));
-  for (const c of execution.commands.filter(c => !deliveryOnly || c.action === "refresh_delivery")) {
+  if (!execution.commands.some(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package"].includes(c.action)))
+    root.append(node("p", deliveryOnly ? "No delivery actions have been requested." : "No execution controls have been requested."));
+  for (const c of execution.commands.filter(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package"].includes(c.action))) {
     const item = node("article", undefined, "card");
     item.append(
       node(
@@ -1180,6 +1184,47 @@ function deliveryPanel(p, d) {
       card.append(form);
     }
     root.append(card);
+  }
+  return root;
+}
+
+function sharedDelivery(p, shared) {
+  const root = node("section", undefined, "delivery-shared");
+  root.append(node("h3", "Shared delivery content"), node("p", "Only explicitly shared content appears here. Drafts are visible to all authenticated team members; keep credentials and private transcripts out of these fields.", "meta"));
+  if (shared.integrate) {
+    const recipe = shared.integrate;
+    root.append(node("h4", "Owner-published integration recipe"),
+      node("p", `Version ${recipe.version} · ${recipe.freshness} revisions · SHA-256 ${recipe.sha256}`, "meta"),
+      table(["Check", "Lot", "Exact command"], recipe.checks.map(c => [c.name, c.lot, c.cmd])));
+  } else root.append(node("p", "No integration recipe shared. Publish one on the owning laptop with plat delivery publish-integration."));
+  const fields = {summary: "Summary", rollout: "Rollout", rollback: "Rollback", test_instructions: "Test instructions", configuration: "Configuration", risks: "Risks"};
+  const draft = shared.record_package;
+  if (draft) {
+    root.append(node("h4", "Shared package draft"), node("p", `Shared by ${draft.shared_by} · version ${draft.version} · ${draft.freshness} revisions · ${draft.recorded ? "Recorded package source" : "Draft — not recorded"} · SHA-256 ${draft.sha256}. Saving a draft does not accept it.`, "meta"));
+    for (const [key, label] of Object.entries(fields)) root.append(node("h4", label), node("p", draft.fields[key], "prose"));
+  } else root.append(node("p", "No package draft has been shared."));
+  if (member.role !== "viewer" && p.status === "delivered") {
+    const details = node("details"), form = node("form", undefined, "composer"), inputs = {};
+    details.append(node("summary", "Edit and share package draft"));
+    for (const [key, label] of Object.entries(fields)) {
+      const input = node("textarea"); input.rows = 4; input.maxLength = 8000; input.required = true;
+      input.value = draft?.fields[key] || ""; inputs[key] = input;
+      input.oninput = () => { form.dataset.dirty = "true"; input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
+      const f = field(label, input); f.className = "wide"; form.append(f);
+    }
+    const controls = node("div", undefined, "button-group wide");
+    controls.append(button("Expand editor", () => Object.values(inputs).forEach(i => i.classList.toggle("expanded")), "secondary"));
+    const save = node("button", "Share package draft"); save.type = "submit"; save.disabled = !connected; controls.append(save); form.append(controls);
+    form.addEventListener("commandconfirmed", event => {
+      if (event.detail.path === "workspace" && event.detail.body.action === "share_package") delete form.dataset.dirty;
+    });
+    form.onsubmit = async e => {
+      e.preventDefault(); save.disabled = true;
+      await send("workspace", {action: "share_package", plat: p.id, version: draft?.version || 0,
+        fields: Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]))});
+      save.disabled = !connected;
+    };
+    details.append(form); root.append(details);
   }
   return root;
 }
