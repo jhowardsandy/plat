@@ -47,7 +47,16 @@ def command(db, member, request):
             raise Conflict('idempotency key was already used for another command')
         return prior.result
     action = request.get('action')
-    if action == 'share_package':
+    if action == 'share_publication':
+        from . import publication
+        if not member.active or member.role not in ('engineer', 'admin'):
+            raise Forbidden('an active engineer or administrator is required')
+        p = db.scalars(select(Plat).where(Plat.public_id == request.get('plat'))).first()
+        if not p:
+            raise ValueError('plat not found')
+        result = publication.share(db, p, request.get('target'), request.get('body'),
+                                   request.get('version'), member.name)
+    elif action == 'share_package':
         from . import delivery_actions
         if member.role == 'viewer':
             raise Forbidden('viewers cannot share delivery drafts')
@@ -131,10 +140,11 @@ def room(db, public_id):
     from .delivery import project as delivery_project
     from .delivery_actions import project as action_project
     from .executor import room as execution_room
+    from .publication import project as publication_project
     return {
         'execution': execution_room(db, p),
         'delivery': delivery_project(db, p),
-        'delivery_actions': action_project(db, p),
+        'delivery_actions': {**action_project(db, p), 'publication': publication_project(db, p)},
         'attempts': [{'id': a.id, 'lot': db.get(Lot, a.lot_id).key, 'phase': a.phase,
                       'attempt': a.n, 'provider': a.provider, 'model': a.model,
                       'exit_code': a.exit_code, 'started': a.started_at, 'finished': a.finished_at,
