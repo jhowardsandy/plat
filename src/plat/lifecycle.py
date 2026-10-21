@@ -161,7 +161,7 @@ def accept(db, plat, stage, data, expected):
         _required(data, 'summary', 'rollout', 'rollback', 'test_instructions', 'configuration', 'risks')
         integration = latest(db, plat, 'integration')
         snap = revisions(db, plat)
-        if not integration or integration.content['revisions'] != snap:
+        if not integration or not integration.content.get('passed') or integration.content['revisions'] != snap:
             raise WorkflowError('integration evidence is stale; rerun integration')
         data = {**data, 'revisions': snap, 'spec_hash': w.spec_hash,
                 'integration_hash': integration.sha256}

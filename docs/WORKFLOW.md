@@ -510,3 +510,61 @@ cancelled; a lost response is retried with the same idempotency key. Disconnecti
 leaves ambiguous work uncertain and requires local reconciliation; no automatic
 replay occurs. Provider failures are sanitized and visible as failed requests.
 Existing outstanding execution requests serialize refreshes with other controls.
+
+### Shared delivery drafts and owner-published integration
+
+Delivery now includes explicit shared prose and two additional executor actions:
+**Run integration** and **Record package**. Sharing never imports raw narratives,
+transcripts, prompts, or logs automatically. All authenticated members can read the
+shared content; engineers/admins can edit package drafts and request actions.
+
+Publish an integration recipe on the installation and host that owns every lot.
+Publication makes its exact commands visible to the team and authorizes them as
+available operations for Room; inspect the file for credentials before publishing.
+The browser cannot create or modify these shell commands.
+
+```yaml
+checks:
+  - name: Producer/consumer contract
+    lot: api
+    cmd: pytest tests/test_contract.py
+  - name: Deployment manifests
+    lot: deployments
+    cmd: make validate
+```
+
+```bash
+plat delivery publish-integration DEV-1234 --file integration.yaml --version 0
+plat delivery status DEV-1234
+```
+
+The recipe is bound to the current clean revisions and accepted specification.
+For replacements, use the recipe version returned by `status`. Publication requires
+local delivery and a full lifecycle. **Run integration** previews those exact
+commands, then the owner executor invokes the existing lifecycle integration
+runner with its normal claims, independent checks, and revision validation.
+Commands execute with the owner's local permissions, so published checks should
+be chosen deliberately. Plat does not invoke the deployment workflow here.
+A failed check records failed evidence and does not permit package recording.
+
+Use **Edit and share package draft** to provide summary, rollout, rollback, test
+instructions, configuration, and risks. The fields are expandable multiline text;
+**Share package draft** explicitly exposes them to the team. Alternatively:
+
+```bash
+plat delivery share-package DEV-1234 --file delivery-package.yaml --version 0
+```
+
+The CLI imports only those six fields. Both paths preserve immutable prior drafts,
+attribute the author, bind the current revisions/specification, and reject stale
+edits. Room distinguishes the shared draft from a recorded package source and
+shows current/stale/unverified revision status. Editing a draft does not overwrite
+an accepted package or advance the workflow.
+
+After successful integration, **Record package** previews the exact draft version
+and hash. The owner verifies revisions again and records that draft through the
+existing lifecycle acceptance path, advancing to deployment without deploying.
+The accepted record includes the requesting member and shared artifact reference.
+Both new actions use the same authenticated request/ACK/outcome timeline, queued
+cancellation, stale-preview rejection, and no-automatic-replay behavior as the
+other executor controls. Shared content changes require reviewing a new preview.
