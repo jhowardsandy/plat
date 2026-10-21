@@ -10,7 +10,7 @@ from .ownership import actor, host_id
 from .team import Conflict
 
 FIELDS = ('summary', 'rollout', 'rollback', 'test_instructions', 'configuration', 'risks')
-KINDS = {'integrate': 'integration_recipe', 'record_package': 'delivery_package'}
+KINDS = {'integrate': 'integration_recipe', 'record_package': 'delivery_package', 'deploy_test': 'deployment_recipe'}
 
 
 def latest(db, p, action):
@@ -69,6 +69,27 @@ def publish_recipe(db, cfg, p, data, version):
         'installation': cfg.origin_id, 'host': host_id()}, version, actor())
 
 
+def publish_deployment(db, cfg, p, data, version):
+    snapshot = _snapshot(db, p)
+    lots = db.scalars(select(Lot).where(Lot.plat_id == p.id)).all()
+    if any((l.config or {}).get('host_id') != host_id() or
+           (l.config or {}).get('executor_id') != cfg.origin_id for l in lots):
+        raise ValueError('publish deployment recipes on the owning installation and host')
+    keys = {'environment', 'target', 'artifact', 'rollback_artifact', 'lot', 'deploy', 'smoke', 'rollback'}
+    if not isinstance(data, dict) or set(data) != keys or any(
+            not isinstance(data[k], str) or not data[k].strip() or len(data[k]) > 4000 for k in keys):
+        raise ValueError('deployment recipe requires only environment, target, artifact, rollback_artifact, lot, deploy, smoke, rollback (1–4000 characters each)')
+    if data['environment'] not in ('local', 'dev', 'demo', 'beta'):
+        raise ValueError('only local/dev/demo/beta test environments are supported')
+    if data['lot'] not in {l.key for l in lots}:
+        raise ValueError('deployment lot does not exist')
+    package = L.latest(db, p, 'recording')
+    if not package or package.content.get('revisions') != snapshot['revisions'] or package.content.get('spec_hash') != snapshot['spec_hash']:
+        raise Conflict('record a current delivery package before publishing deployment')
+    return _save(db, p, 'deploy_test', {**snapshot, **data, 'package_hash': package.sha256,
+        'installation': cfg.origin_id, 'host': host_id()}, version, actor())
+
+
 def share_package(db, p, fields, version, who):
     snapshot = _snapshot(db, p)
     if not isinstance(fields, dict) or set(fields) != set(FIELDS) or any(
@@ -79,7 +100,7 @@ def share_package(db, p, fields, version, who):
 
 def validate(db, p, action, *, observe=False):
     w = db.get(Workflow, p.id)
-    allowed = ('development', 'integration', 'recording', 'deployment', 'validation', 'ready') if action == 'integrate' else ('recording',)
+    allowed = ('development', 'integration', 'recording', 'deployment', 'validation', 'ready') if action == 'integrate' else ('deployment',) if action == 'deploy_test' else ('recording',)
     if not w or w.stage not in allowed or p.status != 'delivered' or not p.delivered_at:
         raise Conflict('delivery action is not available at the current workflow stage')
     row = latest(db, p, action)
@@ -94,14 +115,21 @@ def validate(db, p, action, *, observe=False):
         integration = L.latest(db, p, 'integration')
         if not integration or not integration.content.get('passed') or integration.content.get('revisions') != data['revisions']:
             raise Conflict('successful integration of these revisions is required')
+    if action == 'deploy_test':
+        package = L.latest(db, p, 'recording')
+        if not package or package.sha256 != data['package_hash'] or package.content.get('revisions') != data['revisions']:
+            raise Conflict('deployment package changed; review and republish the recipe')
     return data
 
 
 def execute(db, cfg, p, action, version, who):
     data = validate(db, p, action, observe=True)
-    if action == 'integrate':
+    if action in ('integrate', 'deploy_test'):
         if data['installation'] != cfg.origin_id or data['host'] != host_id():
-            raise Conflict('integration recipe belongs to another machine')
+            raise Conflict('delivery recipe belongs to another machine')
+        if action == 'deploy_test':
+            return L.deploy(db, cfg, p, {**data, 'requested_by': who,
+                'shared_artifact': reference(db, p, action)}, version)
         return L.integration(db, cfg, p, {'checks': data['checks']}, version)
     return L.accept(db, p, 'recording', {**data['fields'], 'requested_by': who,
         'shared_artifact': reference(db, p, action)}, version)
@@ -111,6 +139,7 @@ def project(db, p):
     out = {}
     revisions = L.readiness(db, p).get('revisions')
     recorded = L.latest(db, p, 'recording')
+    deployment = L.latest(db, p, 'deployment')
     for action in KINDS:
         row = latest(db, p, action)
         out[action] = ({'version': row.id, 'sha256': row.sha256, 'created': row.created_at,
@@ -118,6 +147,12 @@ def project(db, p):
         if row:
             out[action]['freshness'] = ('unverified' if revisions is None else
                 'current' if out[action]['revisions'] == revisions else 'stale')
+            if action == 'deploy_test':
+                out[action]['package_current'] = bool(recorded and recorded.sha256 == out[action]['package_hash'])
+                out[action]['result'] = ({'passed': deployment.content.get('passed'),
+                    'version': deployment.version,
+                    'results': {k: {'exit_code': v.get('exit_code')} for k, v in deployment.content.get('results', {}).items()}}
+                    if deployment and deployment.content.get('shared_artifact', {}).get('version') == row.id else None)
             out[action]['recorded'] = bool(action == 'record_package' and recorded and
                 recorded.content.get('shared_artifact', {}).get('version') == row.id)
     return out

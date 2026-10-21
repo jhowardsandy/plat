@@ -71,3 +71,13 @@ def share_package(anchor: str, file: Path = typer.Option(..., exists=True),
         data = input_file(file)
         output(delivery_actions.share_package(db, resolve(db, anchor),
             {k: data.get(k) for k in delivery_actions.FIELDS}, version, actor()))
+
+
+@app.command('publish-deployment')
+def publish_deployment(anchor: str, file: Path = typer.Option(..., exists=True),
+                       version: int = typer.Option(0)):
+    """Share an owner-authored test deployment recipe for reviewed Room execution."""
+    from . import delivery_actions
+    from .workflow_cli import input_file
+    with DB.session() as db:
+        output(delivery_actions.publish_deployment(db, load(), resolve(db, anchor), input_file(file), version))
