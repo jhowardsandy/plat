@@ -672,7 +672,7 @@ function renderRoom() {
       ),
     );
   } else if (roomTab === "delivery") {
-    root.append(deliveryPanel(p, r.delivery));
+    root.append(deliveryPanel(p, r.delivery), executionControls(p, r.execution, true));
   } else if (roomTab === "execution") {
     root.append(executionControls(p, r.execution));
   } else if (roomTab === "evidence") {
@@ -972,7 +972,7 @@ window.addEventListener("beforeunload", (e) => {
 });
 setInterval(() => refresh(false), 15000);
 
-function executionControls(p, execution) {
+function executionControls(p, execution, deliveryOnly = false) {
   const root = node("section");
   const machines = execution.executors.filter((e) => e.matches);
   root.append(node("h3", "Owning machine"));
@@ -992,7 +992,7 @@ function executionControls(p, execution) {
   root.append(
     node(
       "p",
-      "Requests are authenticated and recorded. Acknowledged means the machine received the request; completed means the control finished, not that the ticket is delivered. Pause allows in-flight agents to finish.",
+      deliveryOnly ? "Refresh requests use the owning machine’s provider login. Acknowledged means received; completed means status was collected, not that CI passed. No agents or workflow changes." : "Requests are authenticated and recorded. Acknowledged means the machine received the request; completed means the control finished, not that the ticket is delivered. Pause allows in-flight agents to finish.",
       "meta",
     ),
   );
@@ -1024,14 +1024,15 @@ function executionControls(p, execution) {
     const submit = node("button", "Review a control first");
     submit.type = "submit";
     submit.disabled = true;
-    for (const a of ["start", "pause", "resume"]) {
+    for (const a of deliveryOnly ? ["refresh_delivery"] : ["start", "pause", "resume"]) {
       const b = button(
-        a[0].toUpperCase() + a.slice(1),
+        a === "refresh_delivery" ? "Refresh PR / CI status" : a[0].toUpperCase() + a.slice(1),
         () => {
           action = a;
           form.dataset.dirty = "true";
           preview.textContent = `${a.toUpperCase()} ${p.anchor} on ${machines.find((e) => e.id === machine.value)?.name}. Workflow v${p.version}; ${execution.scope.lots.length} lot(s) (${execution.scope.lots.map((l) => l.key + ": " + l.phases.join(" → ")).join("; ")}); ${p.budget ? money(execution.scope.budget) + " approximate budget" : "unbounded budget"}. ${a === "pause" ? "Current agents may finish; no new phase should start." : "Launch the configured phases serially using the machine's logged-in provider accounts."}`;
-          submit.textContent = "Request " + a;
+          if (a === "refresh_delivery") preview.textContent = `Refresh ${execution.delivery_targets.length} linked PR/MR(s) on ${machines.find(e => e.id === machine.value)?.name}: ${execution.delivery_targets.map(t => t.lot + " · " + t.url).join("; ")}. Read provider status using that laptop's login. No agents, external writes, or workflow changes.`;
+          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : "Request " + a;
           submit.disabled = false;
         },
         "secondary",
@@ -1043,6 +1044,7 @@ function executionControls(p, execution) {
           start: ["planned"],
           pause: ["planned", "running"],
           resume: ["paused"],
+          refresh_delivery: execution.delivery_targets.length ? ["planned", "running", "paused", "delivered"] : [],
         }[a].includes(p.status);
       buttons.append(b);
     }
@@ -1084,7 +1086,7 @@ function executionControls(p, execution) {
         executor: machine.value,
         action,
         version: p.version,
-        scope_hash: execution.scope_hash,
+        scope_hash: action === "refresh_delivery" ? execution.delivery_scope_hash : execution.scope_hash,
         status: p.status,
         note: note.value,
       });
@@ -1096,9 +1098,9 @@ function executionControls(p, execution) {
     root.append(form);
   }
   root.append(node("h3", "Control requests"));
-  if (!execution.commands.length)
-    root.append(node("p", "No execution controls have been requested."));
-  for (const c of execution.commands) {
+  if (!execution.commands.some(c => !deliveryOnly || c.action === "refresh_delivery"))
+    root.append(node("p", deliveryOnly ? "No provider refresh has been requested." : "No execution controls have been requested."));
+  for (const c of execution.commands.filter(c => !deliveryOnly || c.action === "refresh_delivery")) {
     const item = node("article", undefined, "card");
     item.append(
       node(
@@ -1137,7 +1139,7 @@ function deliveryPanel(p, d) {
   const root = node("section");
   root.append(node("h3", "Delivery workspace"), node("p",
     d.readiness.ready ? "Lifecycle evidence complete" : d.readiness.missing.join(" · ")));
-  root.append(node("p", "External review and CI are observations, not Plat gate results. Refresh on the owning laptop; observations older than 15 minutes are flagged.", "meta"));
+  root.append(node("p", "External review and CI are observations, not Plat gate results. Request a refresh below or use the owner CLI; observations older than 15 minutes are flagged.", "meta"));
   root.append(table(["Evidence", "Status", "Version", "SHA-256"],
     d.stages.map(s => [s.stage === "recording" ? "Delivery package" : s.stage, s.status, s.version, s.sha256])));
   const integration = d.stages.find(s => s.stage === "integration");

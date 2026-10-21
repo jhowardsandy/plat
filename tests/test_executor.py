@@ -150,7 +150,8 @@ def test_credential_rotation_requires_quiescence_and_invalidates_old_token(case)
         assert executor.authenticate(db, replacement).name == 'Rotated'
 
 
-def test_http_authentication_and_real_daemon_pause(case, monkeypatch):
+@pytest.mark.parametrize("action", ["pause", "refresh_delivery"])
+def test_http_authentication_and_real_daemon_pause(case, monkeypatch, action):
     import json
     import os
     import subprocess
@@ -168,7 +169,24 @@ def test_http_authentication_and_real_daemon_pause(case, monkeypatch):
         member, member_token = team.add_member(db, 'engineer', 'engineer')
         e, machine_token = executor.provision(db, case.cfg, 'Real local worker')
         p = db.scalars(select(Plat)).one()
-        scope_hash = executor.lifecycle.digest(executor.scope(db, p))
+        if action == 'refresh_delivery':
+            from test_m0 import git
+
+            from plat import delivery
+            lot = db.scalars(select(Lot)).one()
+            git(lot.worktree_path, 'remote', 'set-url', 'origin', 'https://github.com/org/repo.git')
+            lot.config = {**lot.config, 'repository_identity': 'github.com/org/repo'}
+            delivery.link(db, p, lot, 'https://github.com/org/repo/pull/1', 0, 'engineer')
+            head = git(lot.worktree_path, 'rev-parse', 'HEAD')
+            fake_bin = case.project / 'fake-bin'
+            fake_bin.mkdir()
+            gh = fake_bin / 'gh'
+            gh.write_text('#!' + sys.executable + '\nimport json\nprint(json.dumps(' + repr({
+                'headRefOid': head, 'state': 'OPEN', 'isDraft': False,
+                'reviewDecision': 'APPROVED', 'statusCheckRollup': []}) + '))\n')
+            gh.chmod(0o700)
+            monkeypatch.setenv('PATH', str(fake_bin) + os.pathsep + os.environ['PATH'])
+        scope_hash = executor.preview_hash(db, p, action)
     home = Path(os.environ['PLAT_HOME'])
     home.mkdir(exist_ok=True)
     (home / 'origin_id').write_text(case.cfg.origin_id)
@@ -200,7 +218,7 @@ def test_http_authentication_and_real_daemon_pause(case, monkeypatch):
             time.sleep(.1)
         assert connected
         body = {'key': str(uuid4()), 'plat': p.public_id, 'executor': e.public_id,
-                'scope_hash': scope_hash, 'action': 'pause', 'version': 0, 'status': 'planned', 'note': 'HTTP control qualification'}
+                'scope_hash': scope_hash, 'action': action, 'version': 0, 'status': 'planned', 'note': 'HTTP control qualification'}
         with pytest.raises(HTTPError) as denied:
             _post(origin, machine_token, '/api/execution', body)
         assert denied.value.code == 403
@@ -216,7 +234,7 @@ def test_http_authentication_and_real_daemon_pause(case, monkeypatch):
             time.sleep(.1)
         assert state == 'completed'
         with DB.session() as db:
-            assert db.get(Plat, p.id).status == 'paused'
+            assert db.get(Plat, p.id).status == ('paused' if action == 'pause' else 'planned')
             room = executor.room(db, db.get(Plat, p.id))
             assert room['commands'][0]['acknowledged'] and room['commands'][0]['finished']
             assert 'token' not in json.dumps(room, default=str)
@@ -385,3 +403,78 @@ def test_cancel_between_poll_and_ack_keeps_daemon_connected(tmp_path, monkeypatc
     with pytest.raises(KeyboardInterrupt):
         executor_cli.serve(token_file=token)
     assert calls == ['/api/executor/poll', '/api/executor/ack', '/api/executor/poll']
+
+
+def linked_refresh(db, case):
+    from plat import delivery
+    member, e, token, session, p, body = setup(db, case)
+    lot = db.scalars(select(Lot)).one()
+    lot.config = {**lot.config, 'repository_identity': 'github.com/org/repo'}
+    delivery.link(db, p, lot, 'https://github.com/org/repo/pull/1', 0, 'operator')
+    return member, e, session, p, lot, {**body, 'action': 'refresh_delivery',
+        'scope_hash': executor.preview_hash(db, p, 'refresh_delivery')}
+
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_delivery_refresh_records_ack_outcome_without_agents_or_state_changes(case, monkeypatch, failed):
+    from plat import delivery
+    plan(case)
+    with DB.session() as db:
+        member, e, session, p, lot, body = linked_refresh(db, case)
+        reply = executor.request(db, member, body)
+        assert executor.request(db, member, body) == reply
+        executor.acknowledge(db, e, reply['id'], session)
+    revision = {'repository': 'github.com/org/repo', 'commit': 'abc', 'dirty': False, 'fingerprint': 'abc'}
+    monkeypatch.setattr(delivery, 'local_revision', lambda _: revision)
+    def provider(_):
+        if failed:
+            raise ValueError('secret provider failure')
+        return {'head': 'abc', 'checks': [], 'checks_head': 'abc'}
+    monkeypatch.setattr(delivery, 'fetch', provider)
+    executor.execute(case.cfg, reply['id'], session)
+    with DB.session() as db:
+        cmd = db.scalars(select(ExecutionCommand)).one()
+        assert cmd.state == ('failed' if failed else 'completed')
+        assert cmd.acknowledged_at and cmd.started_at and cmd.finished_at
+        assert 'secret' not in cmd.outcome
+        assert db.get(Plat, p.id).status == 'planned'
+        assert db.get(Lot, lot.id).state == 'PENDING'
+    assert not case.calls
+    with pytest.raises(Conflict, match='never replay'):
+        executor.execute(case.cfg, reply['id'], session)
+
+
+@pytest.mark.parametrize('after_ack', [False, True])
+def test_delivery_link_change_invalidates_preview(case, after_ack):
+    from plat import delivery
+    plan(case)
+    with DB.session() as db:
+        member, e, session, p, lot, body = linked_refresh(db, case)
+        reply = executor.request(db, member, body)
+        if after_ack:
+            executor.acknowledge(db, e, reply['id'], session)
+        delivery.link(db, p, lot, 'https://github.com/org/repo/pull/2', delivery.current(db, p, lot).id, 'operator')
+        if not after_ack:
+            assert executor.acknowledge(db, e, reply['id'], session)['state'] == 'failed'
+    if after_ack:
+        executor.execute(case.cfg, reply['id'], session)
+    with DB.session() as db:
+        assert db.scalars(select(ExecutionCommand)).one().state == 'failed'
+    assert not case.calls
+
+
+def test_delivery_refresh_requires_links_and_active_engineer(case):
+    plan(case)
+    with DB.session() as db:
+        member, e, _, session, p, body = setup(db, case)
+        body = {**body, 'action': 'refresh_delivery', 'scope_hash': executor.preview_hash(db, p, 'refresh_delivery')}
+        with pytest.raises(Conflict, match='link at least'):
+            executor.request(db, member, body)
+        from plat import delivery
+        lot = db.scalars(select(Lot)).one()
+        lot.config = {**lot.config, 'repository_identity': 'github.com/org/repo'}
+        delivery.link(db, p, lot, 'https://github.com/org/repo/pull/1', 0, 'operator')
+        body['scope_hash'] = executor.preview_hash(db, p, 'refresh_delivery')
+        reply = executor.request(db, member, body)
+        member.active = False
+        assert executor.acknowledge(db, e, reply['id'], session)['state'] == 'failed'

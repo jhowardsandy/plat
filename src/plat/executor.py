@@ -4,6 +4,7 @@ HTTP carries a fixed vocabulary, never shell commands. Execution still uses the
 trusted installation's database and independently gated runner.
 """
 import hashlib
+import json
 import os
 import secrets
 from datetime import timedelta
@@ -92,19 +93,41 @@ def scope(db, p):
         for l in db.scalars(select(Lot).where(Lot.plat_id == p.id).order_by(Lot.key))]}
 
 
+def delivery_targets(db, p):
+    from .delivery import current
+    targets = []
+    for lot in db.scalars(select(Lot).where(Lot.plat_id == p.id).order_by(Lot.key)):
+        row = current(db, p, lot)
+        if row and json.loads(row.body).get('url'):
+            targets.append({'lot': lot.key, 'version': row.id, 'url': json.loads(row.body)['url']})
+    return targets
+
+
+def preview_hash(db, p, action):
+    value = scope(db, p)
+    if action == 'refresh_delivery':
+        value = {'scope': value, 'targets': delivery_targets(db, p)}
+    return lifecycle.digest(value)
+
+
 def _validate(db, p, e, action, version, expected_status, scope_hash):
     w = db.get(Workflow, p.id)
     if version != (w.version if w else 0) or p.status != expected_status:
         raise Conflict('workflow or run state changed; refresh before requesting control')
     if p.closed_at or p.status not in {'start': ('planned',), 'resume': ('paused',),
-                                      'pause': ('running', 'planned')}[action]:
+                                      'pause': ('running', 'planned'),
+                                      'refresh_delivery': ('planned', 'running', 'paused', 'delivered')}[action]:
         raise Conflict(f'{action} is not available while the run is {p.status}')
     lots = db.scalars(select(Lot).where(Lot.plat_id == p.id)).all()
     if not lots or any((l.config or {}).get('executor_id') != e.installation or
                        (l.config or {}).get('host_id') != e.host_id for l in lots):
         raise Conflict('all lots must be bound to this registered machine')
-    if scope_hash != lifecycle.digest(scope(db, p)):
-        raise Conflict('plan or budget changed; review the current preview and request again')
+    if scope_hash != preview_hash(db, p, action):
+        raise Conflict('plan or budget changed, or delivery links changed; review the current preview and request again')
+    if action == 'refresh_delivery':
+        if not delivery_targets(db, p):
+            raise Conflict('link at least one PR/MR before requesting refresh')
+        return
     if action != 'pause':
         lifecycle.require_accepted(db, p)
         allowed = ('PENDING', 'DONE') if action == 'start' else ('PENDING', 'DONE', 'CODING', 'GATE', 'REVIEWING', 'DOCS', 'QUALITY')
@@ -149,8 +172,8 @@ def request(db, member, payload):
             raise Conflict('only a queued request can be cancelled')
         _change(db, cmd, 'cancelled', f'Cancelled by {member.name}')
     else:
-        if action not in ('start', 'pause', 'resume'):
-            raise ValueError('supported controls: start, pause, resume, cancel')
+        if action not in ('start', 'pause', 'resume', 'refresh_delivery'):
+            raise ValueError('supported controls: start, pause, resume, refresh_delivery, cancel')
         note = payload.get('note')
         if not isinstance(note, str) or not note.strip() or len(note) > 4000:
             raise ValueError('a reason of 1–4000 characters is required')
@@ -270,7 +293,7 @@ def execute(cfg, public_id, session):
             if not member or not member.active or member.role not in ('engineer', 'admin'):
                 raise Forbidden('requesting member no longer authorized')
             _validate(db, p, e, cmd.action, cmd.version, cmd.expected_status, cmd.scope_hash)
-            if cmd.action != 'pause':
+            if cmd.action in ('start', 'resume'):
                 from .cli import _check_roles
                 for lot in db.scalars(select(Lot).where(Lot.plat_id == p.id)):
                     _check_roles(cfg, (lot.config or {}).get('phases', cfg.phases))
@@ -279,11 +302,16 @@ def execute(cfg, public_id, session):
             return
         cmd.pid, cmd.started_at = os.getpid(), db.scalar(select(func.clock_timestamp()))
         # State and command outcome belong to the same audited transaction.
-        p.status = 'paused' if cmd.action == 'pause' else 'running'
+        if cmd.action != 'refresh_delivery':
+            p.status = 'paused' if cmd.action == 'pause' else 'running'
         _change(db, cmd, 'completed' if cmd.action == 'pause' else 'running',
-                'Pause applied; in-flight agents may finish.' if cmd.action == 'pause' else 'Local runner started.')
+                'Pause applied; in-flight agents may finish.' if cmd.action == 'pause' else 'Provider refresh started.' if cmd.action == 'refresh_delivery' else 'Local runner started.')
         plat_id, command_id, action = p.id, cmd.id, cmd.action
+        targets = delivery_targets(db, p) if action == 'refresh_delivery' else []
     if action == 'pause':
+        return
+    if action == 'refresh_delivery':
+        _refresh_delivery(cfg, plat_id, command_id, session, targets)
         return
     try:
         states = InlineDispatcher().run(cfg, plat_id, workers=1)
@@ -299,6 +327,36 @@ def execute(cfg, public_id, session):
                 _change(db, cmd, state, outcome)
 
 
+def _refresh_delivery(cfg, plat_id, command_id, session, targets):
+    from . import db as DB
+    from . import delivery
+    results = []
+    state = 'completed'
+    try:
+        for target in targets:
+            with DB.session() as db:
+                p = db.get(Plat, plat_id)
+                lot = db.scalars(select(Lot).where(Lot.plat_id == plat_id, Lot.key == target['lot'])).one()
+                result = delivery.refresh(db, cfg, p, lot, expected_version=target['version'])
+                observation = json.loads(db.get(Artifact, result['version']).body)['observation']
+                failed = bool(observation.get('error'))
+                if failed:
+                    state = 'failed'
+                results.append(target['lot'] + (': refresh failed' if failed else ': observed'))
+        outcome = '; '.join(results) + '. Inspect Delivery for revision warnings and CI results; no workflow stages changed.'
+    except (ValueError, OSError):
+        state, outcome = 'failed', '; '.join(results + ['Refresh stopped: delivery context changed or provider unavailable. Inspect Delivery and request again.'])
+    except BaseException:
+        state, outcome = 'uncertain', 'Refresh interrupted; inspect locally before reconciling. No automatic replay.'
+        raise
+    finally:
+        with DB.session() as db:
+            db.execute(select(Plat.id).where(Plat.id == plat_id).with_for_update())
+            cmd = db.get(ExecutionCommand, command_id)
+            if cmd.delivery_session == session and cmd.state == 'running':
+                _change(db, cmd, state, outcome)
+
+
 def room(db, p):
     online = dict(db.execute(text('SELECT id, online FROM v_executor_status')).all())
     lost = dict(db.execute(text('SELECT id, connection_lost FROM v_execution_command_status')).all())
@@ -308,7 +366,8 @@ def room(db, p):
     public_preview = {'budget': preview['budget'], 'lots': [
         {'key': l['key'], 'repo': l['repo'], 'phases': (l['config'] or {}).get('phases', [])}
         for l in preview['lots']]}
-    return {'scope': public_preview, 'scope_hash': lifecycle.digest(preview), 'executors': [{'id': e.public_id, 'name': e.name, 'online': online[e.id],
+    return {'delivery_targets': delivery_targets(db, p),
+            'delivery_scope_hash': preview_hash(db, p, 'refresh_delivery'), 'scope': public_preview, 'scope_hash': lifecycle.digest(preview), 'executors': [{'id': e.public_id, 'name': e.name, 'online': online[e.id],
                           'seen': e.last_seen, 'matches': bool(lots) and all(
                               (l.config or {}).get('executor_id') == e.installation and
                               (l.config or {}).get('host_id') == e.host_id for l in lots)} for e in executors],

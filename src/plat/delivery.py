@@ -93,7 +93,7 @@ def fetch(info):
             'checks': [{'name': 'Head pipeline', 'status': pipeline.get('status', 'unknown')}] if pipeline else []}
 
 
-def refresh(db, cfg, plat, lot):
+def refresh(db, cfg, plat, lot, *, expected_version=None):
     db.execute(select(Plat.id).where(Plat.id == plat.id).with_for_update())
     db.refresh(lot)
     config = lot.config or {}
@@ -105,6 +105,8 @@ def refresh(db, cfg, plat, lot):
     prior = current(db, plat, lot)
     if not prior or not json.loads(prior.body).get('url'):
         raise ValueError('link a PR/MR first')
+    if expected_version is not None and prior.id != expected_version:
+        raise Conflict('delivery link changed after the request was previewed')
     info = parse_link(json.loads(prior.body)['url'])
     before = local_revision(lot)
     if before['repository'] != info['repository']:

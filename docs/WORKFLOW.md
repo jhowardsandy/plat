@@ -475,8 +475,8 @@ plat delivery refresh DEV-1234 api
 
 `--version` is the delivery link version returned by `status`, not the workflow
 version. Browser updates refresh automatically after an acknowledged link change.
-Provider status is refreshed explicitly through the CLI; browser polling reads
-stored observations and does not contact providers. The web server never receives
+Provider status can be refreshed explicitly through the CLI or requested in the
+Delivery tab. Browser polling reads stored observations and does not contact providers. The web server never receives
 provider credentials. This slice supports github.com and gitlab.com, including
 nested GitLab groups; self-hosted providers remain future work.
 
@@ -492,5 +492,21 @@ claims completeness of branch protection or merge eligibility.
 Only structured status and artifact hashes are shared here. Raw provider payloads,
 logs, credentials, stage prose, prompts, and transcripts are not exposed. Refresh
 performs read-only provider operations; it does not push, merge, post comments,
-or deploy. Shared narratives and browser-triggered provider refresh are subsequent
-operator-workflow increments.
+or deploy. Shared narratives remain a subsequent operator-workflow increment.
+
+In Delivery, choose **Refresh PR / CI status**, review the linked lots and machine,
+enter a reason, and select **Request status refresh**. Both the server and executor
+must run this release. A registered, online executor must own all lots in the run.
+The fixed `refresh_delivery` command reads every linked PR/MR serially on that
+machine. It never launches agents or changes the run/workflow state. The request
+is bound to the workflow version, run state, plan, budget, and exact link versions.
+Changed previews fail at acknowledgement or execution; a link changed during the
+provider read cannot be overwritten by the old result.
+
+Room shows requested, acknowledged, running, and completed/failed outcomes with
+timestamps, requester, executor, and per-lot results. Completed means the provider
+read succeeded, not that CI passed or delivery is ready. Queued requests can be
+cancelled; a lost response is retried with the same idempotency key. Disconnection
+leaves ambiguous work uncertain and requires local reconciliation; no automatic
+replay occurs. Provider failures are sanitized and visible as failed requests.
+Existing outstanding execution requests serialize refreshes with other controls.
