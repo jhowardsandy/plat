@@ -492,7 +492,7 @@ claims completeness of branch protection or merge eligibility.
 Only structured status and artifact hashes are shared here. Raw provider payloads,
 logs, credentials, stage prose, prompts, and transcripts are not exposed. Refresh
 performs read-only provider operations; it does not push, merge, post comments,
-or deploy. Shared narratives remain a subsequent operator-workflow increment.
+or deploy. Explicit shared narratives and publication controls are described below.
 
 In Delivery, choose **Refresh PR / CI status**, review the linked lots and machine,
 enter a reason, and select **Request status refresh**. Both the server and executor
@@ -568,3 +568,63 @@ The accepted record includes the requesting member and shared artifact reference
 Both new actions use the same authenticated request/ACK/outcome timeline, queued
 cancellation, stale-preview rejection, and no-automatic-replay behavior as the
 other executor controls. Shared content changes require reviewing a new preview.
+
+### Recovery and reviewed PR/Jira comments
+
+Room's Delivery tab includes **Recover workflow** for an interrupted integration
+or deployment. Inspect the owning machine and, for deployment, the environment.
+Enter that inspection in the reason field, review the effect, then choose
+**Request inspected recovery**. Recovery records the note and advances an
+interrupted `deploying` stage back to `deployment`; `integration` stays at
+`integration` for a separately requested rerun. It never kills workers, releases
+claims, retries commands, or runs deployment. Active claims and unfinished
+attempts must be reconciled on their owner first. An outstanding uncertain
+executor command must also be reconciled locally before another request.
+
+**Prepare publication draft** saves explicit comment text for one currently
+linked PR/MR or the tracked Jira ticket. Supported destinations are github.com,
+gitlab.com, and `<site>.atlassian.net/browse/<key>` matching the run's anchor.
+Sync tracker metadata to populate the Jira destination. Arbitrary URLs, new PRs,
+review approvals, merges, Jira transitions, and self-hosted providers are outside
+this control's scope.
+
+1. Choose the destination and write the exact comment in the expandable editor.
+2. **Share publication draft** makes that text visible to authenticated teammates;
+   it does not contact the destination.
+3. Choose **Review publication**. Inspect the destination, entire comment, draft
+   version/hash, and owning machine. Enter the reason, then explicitly choose
+   **Publish reviewed comment**.
+4. Follow requested → acknowledged → running → completed/failed/uncertain.
+   Completed means the provider accepted the comment and it was read back.
+   **Open published comment** links to the verified receipt.
+
+The owner must have authenticated `gh`, `glab`, or `twg` available on its PATH.
+TWG calls explicitly select the destination site and use plain text; GitHub and
+GitLab comments use their native Markdown. CLI text is passed as arguments or a
+private JSON file, never interpolated into shell commands. Provider credentials,
+raw responses, and errors are not shared with the browser.
+
+Publication requires local delivery, accepted specification, and matching clean
+revisions. PR/MR publication additionally checks the provider head against the
+reviewed lot revision. Draft, destination, workflow, run, requester, and machine
+authorization are rechecked before dispatch. This is a reviewed snapshot; an
+external head can still change after the provider read. Publication does not
+advance lifecycle readiness or certify the prose as independently verified.
+
+Before posting, Plat durably records a publication attempt for that draft.
+A draft with an attempt can never be dispatched again, even after local
+reconciliation. There is no automatic POST retry. A timeout, interrupted worker,
+malformed response, or failed read-back after dispatch means **uncertain**:
+inspect the actual destination before making any further publication decision.
+Jira verification scans up to 1,000 comments; an unverified receipt remains
+uncertain. If local reconciliation is needed, stop the executor, wait for its
+lease to expire, and use:
+
+```bash
+plat executor reconcile <command-id> --note "Inspected destination and owning process; observed outcome ..."
+```
+
+Only prepare a new draft after inspecting whether the original comment exists.
+A new draft is a new publication authorization and can intentionally post the
+same text again. Previous drafts, attempts, receipts, and decisions remain in
+the audit history. Both team server and executor must reload this release.

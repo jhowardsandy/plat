@@ -110,6 +110,9 @@ def preview_hash(db, p, action):
     if action in ('integrate', 'record_package'):
         from .delivery_actions import reference
         value = {'scope': value, 'content': reference(db, p, action)}
+    if action == 'publish_comment':
+        from .publication import reference, targets
+        value = {'scope': value, 'draft': reference(db, p), 'targets': targets(db, p)}
     return lifecycle.digest(value)
 
 
@@ -120,7 +123,8 @@ def _validate(db, p, e, action, version, expected_status, scope_hash):
     if p.closed_at or p.status not in {'start': ('planned',), 'resume': ('paused',),
                                       'pause': ('running', 'planned'),
                                       'refresh_delivery': ('planned', 'running', 'paused', 'delivered'),
-                                      'integrate': ('delivered',), 'record_package': ('delivered',)}[action]:
+                                      'integrate': ('delivered',), 'record_package': ('delivered',),
+                                      'recover_workflow': ('delivered',), 'publish_comment': ('delivered',)}[action]:
         raise Conflict(f'{action} is not available while the run is {p.status}')
     lots = db.scalars(select(Lot).where(Lot.plat_id == p.id)).all()
     if not lots or any((l.config or {}).get('executor_id') != e.installation or
@@ -135,6 +139,13 @@ def _validate(db, p, e, action, version, expected_status, scope_hash):
     if action in ('integrate', 'record_package'):
         from .delivery_actions import validate
         validate(db, p, action)
+        return
+    if action == 'recover_workflow':
+        lifecycle.recovery_check(db, p)
+        return
+    if action == 'publish_comment':
+        from .publication import validate
+        validate(db, p)
         return
     if action != 'pause':
         lifecycle.require_accepted(db, p)
@@ -180,8 +191,8 @@ def request(db, member, payload):
             raise Conflict('only a queued request can be cancelled')
         _change(db, cmd, 'cancelled', f'Cancelled by {member.name}')
     else:
-        if action not in ('start', 'pause', 'resume', 'refresh_delivery', 'integrate', 'record_package'):
-            raise ValueError('supported controls: start, pause, resume, refresh_delivery, integrate, record_package, cancel')
+        if action not in ('start', 'pause', 'resume', 'refresh_delivery', 'integrate', 'record_package', 'recover_workflow', 'publish_comment'):
+            raise ValueError('supported controls: start, pause, resume, refresh_delivery, integrate, record_package, recover_workflow, publish_comment, cancel')
         note = payload.get('note')
         if not isinstance(note, str) or not note.strip() or len(note) > 4000:
             raise ValueError('a reason of 1–4000 characters is required')
@@ -313,12 +324,15 @@ def execute(cfg, public_id, session):
         if cmd.action in ('start', 'pause', 'resume'):
             p.status = 'paused' if cmd.action == 'pause' else 'running'
         _change(db, cmd, 'completed' if cmd.action == 'pause' else 'running',
-                'Pause applied; in-flight agents may finish.' if cmd.action == 'pause' else 'Provider refresh started.' if cmd.action == 'refresh_delivery' else 'Delivery action started.' if cmd.action in ('integrate', 'record_package') else 'Local runner started.')
+                'Pause applied; in-flight agents may finish.' if cmd.action == 'pause' else 'Provider refresh started.' if cmd.action == 'refresh_delivery' else 'Delivery action started.' if cmd.action in ('integrate', 'record_package', 'recover_workflow', 'publish_comment') else 'Local runner started.')
         plat_id, command_id, action = p.id, cmd.id, cmd.action
         targets = delivery_targets(db, p) if action == 'refresh_delivery' else []
     if action == 'pause':
         return
-    if action in ('integrate', 'record_package'):
+    if action == 'publish_comment':
+        _publication_action(cfg, plat_id, command_id, session)
+        return
+    if action in ('integrate', 'record_package', 'recover_workflow'):
         _delivery_action(cfg, plat_id, command_id, session)
         return
     if action == 'refresh_delivery':
@@ -351,11 +365,64 @@ def _delivery_action(cfg, plat_id, command_id, session):
             if cmd.state != 'running' or cmd.delivery_session != session or not e.active or not member.active or member.role not in ('engineer', 'admin'):
                 raise Conflict('delivery authorization changed')
             _validate(db, p, e, cmd.action, cmd.version, cmd.expected_status, cmd.scope_hash)
-            row = delivery_actions.execute(db, cfg, p, cmd.action, cmd.version, cmd.actor)
+            row = (lifecycle.recover(db, p, f'{cmd.actor}: {cmd.note}', cmd.version)
+                   if cmd.action == 'recover_workflow' else
+                   delivery_actions.execute(db, cfg, p, cmd.action, cmd.version, cmd.actor))
             state = 'failed' if row.content.get('passed') is False else 'completed'
             outcome = f'{row.stage} recorded at workflow v{row.version}; ' + ('checks failed or revisions changed.' if state == 'failed' else 'inspect the recorded evidence. Deployment workflow not invoked.')
     except (ValueError, OSError):
         state, outcome = 'failed', 'Delivery preflight or checks could not complete. Inspect workflow evidence and owning-machine configuration before retrying.'
+    finally:
+        with DB.session() as db:
+            db.execute(select(Plat.id).where(Plat.id == plat_id).with_for_update())
+            cmd = db.get(ExecutionCommand, command_id)
+            if cmd.delivery_session == session and cmd.state == 'running':
+                _change(db, cmd, state, outcome)
+
+
+def _publication_action(cfg, plat_id, command_id, session):
+    from . import db as DB
+    from . import publication as P
+    state, outcome = 'failed', 'Publication preflight failed; inspect destination access and reviewed revisions.'
+    dispatched = False
+    try:
+        with DB.session() as db:
+            p = db.get(Plat, plat_id)
+            _, data = P.validate(db, p, observe=True)
+        P.preflight(data)  # Slow provider reads do not hold row locks.
+        with DB.session() as db:
+            p = db.scalars(select(Plat).where(Plat.id == plat_id).with_for_update()).one()
+            cmd = db.get(ExecutionCommand, command_id)
+            e = db.get(Executor, cmd.executor_id)
+            db.refresh(e, with_for_update=True)
+            member = db.scalars(select(TeamMember).where(TeamMember.name == cmd.actor).with_for_update()).one()
+            if (cmd.state != 'running' or cmd.delivery_session != session or
+                    not e.active or e.session != session or not e.lease_until or
+                    e.lease_until <= db.scalar(select(func.clock_timestamp())) or
+                    not member.active or member.role not in ('engineer', 'admin')):
+                raise Conflict('publication authorization changed')
+            _validate(db, p, e, cmd.action, cmd.version, cmd.expected_status, cmd.scope_hash)
+            draft, current = P.validate(db, p, observe=True)
+            if current != data:
+                raise Conflict('publication changed during provider preflight')
+            draft_id, draft_hash, who = draft.id, draft.sha256, cmd.actor
+            P.append(db, p, 'publication_attempt', str(draft_id),
+                     {'command': cmd.public_id, 'draft_sha256': draft_hash, 'requested_by': who}, who)
+        # This durable marker is the no-replay boundary. Even a failed POST can
+        # have reached the provider, so every subsequent failure is uncertain.
+        dispatched = True
+        receipt = P.publish(data)
+        with DB.session() as db:
+            p = db.scalars(select(Plat).where(Plat.id == plat_id).with_for_update()).one()
+            P.append(db, p, 'publication_receipt', str(draft_id),
+                     {**receipt, 'draft_sha256': draft_hash, 'requested_by': who}, who)
+        state, outcome = 'completed', 'Comment published and read back: ' + receipt['url']
+    except Exception:
+        if dispatched:
+            state, outcome = 'uncertain', 'Publication may have reached the provider. Inspect the destination and reconcile locally; this draft will not be posted again.'
+    except BaseException:
+        state, outcome = 'uncertain', 'Publication interrupted; inspect the destination before local reconciliation. No automatic replay.'
+        raise
     finally:
         with DB.session() as db:
             db.execute(select(Plat.id).where(Plat.id == plat_id).with_for_update())
@@ -403,7 +470,7 @@ def room(db, p):
     public_preview = {'budget': preview['budget'], 'lots': [
         {'key': l['key'], 'repo': l['repo'], 'phases': (l['config'] or {}).get('phases', [])}
         for l in preview['lots']]}
-    return {'action_scope_hashes': {a: preview_hash(db, p, a) for a in ('integrate', 'record_package')},
+    return {'action_scope_hashes': {a: preview_hash(db, p, a) for a in ('integrate', 'record_package', 'recover_workflow', 'publish_comment')},
             'delivery_targets': delivery_targets(db, p),
             'delivery_scope_hash': preview_hash(db, p, 'refresh_delivery'), 'scope': public_preview, 'scope_hash': lifecycle.digest(preview), 'executors': [{'id': e.public_id, 'name': e.name, 'online': online[e.id],
                           'seen': e.last_seen, 'matches': bool(lots) and all(

@@ -672,7 +672,7 @@ function renderRoom() {
       ),
     );
   } else if (roomTab === "delivery") {
-    root.append(deliveryPanel(p, r.delivery), sharedDelivery(p, r.delivery_actions), executionControls(p, r.execution, true, r.delivery_actions));
+    root.append(deliveryPanel(p, r.delivery), sharedDelivery(p, r.delivery_actions), publicationPanel(p, r.delivery_actions.publication), executionControls(p, r.execution, true, r.delivery_actions));
   } else if (roomTab === "execution") {
     root.append(executionControls(p, r.execution));
   } else if (roomTab === "evidence") {
@@ -1024,9 +1024,9 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
     const submit = node("button", "Review a control first");
     submit.type = "submit";
     submit.disabled = true;
-    for (const a of deliveryOnly ? ["refresh_delivery", "integrate", "record_package"] : ["start", "pause", "resume"]) {
+    for (const a of deliveryOnly ? ["refresh_delivery", "integrate", "record_package", "recover_workflow", "publish_comment"] : ["start", "pause", "resume"]) {
       const b = button(
-        a === "refresh_delivery" ? "Refresh PR / CI status" : a === "integrate" ? "Run integration" : a === "record_package" ? "Record package" : a[0].toUpperCase() + a.slice(1),
+        a === "refresh_delivery" ? "Refresh PR / CI status" : a === "integrate" ? "Run integration" : a === "record_package" ? "Record package" : a === "recover_workflow" ? "Recover workflow" : a === "publish_comment" ? "Review publication" : a[0].toUpperCase() + a.slice(1),
         () => {
           action = a;
           form.dataset.dirty = "true";
@@ -1034,7 +1034,13 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
           if (a === "refresh_delivery") preview.textContent = `Refresh ${execution.delivery_targets.length} linked PR/MR(s) on ${machines.find(e => e.id === machine.value)?.name}: ${execution.delivery_targets.map(t => t.lot + " · " + t.url).join("; ")}. Read provider status using that laptop's login. No agents, external writes, or workflow changes.`;
           if (a === "integrate") preview.textContent = `Run the owner-published integration recipe on ${machines.find(e => e.id === machine.value)?.name}. Recipe ${shared.integrate.version}; SHA-256 ${shared.integrate.sha256}. Commands: ${shared.integrate.checks.map(c => c.name + " (" + c.lot + "): " + c.cmd).join("; ")}. This executes the published shell checks with the machine's permissions and records independent evidence. It does not invoke Plat's deployment workflow.`;
           if (a === "record_package") preview.textContent = `Record the shared package draft ${shared.record_package.version}, SHA-256 ${shared.record_package.sha256}, on ${machines.find(e => e.id === machine.value)?.name}. The owner verifies current revisions and successful integration before advancing to deployment. This does not deploy.`;
-          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : a === "integrate" ? "Request integration" : a === "record_package" ? "Request package recording" : "Request " + a;
+          if (a === "recover_workflow") preview.textContent = `Recover ${p.stage} at workflow v${p.version}. Confirm in the inspection note that the interrupted operation and environment have been checked. Active claims and unfinished attempts must be reconciled locally first. This records recovery; it does not kill processes, clear claims, run checks, or redeploy.`;
+          if (a === "publish_comment") {
+            const draft = shared.publication.draft;
+            preview.textContent = `Post this exact comment to ${draft.target.url} using ${machines.find(e => e.id === machine.value)?.name}'s provider account. Draft ${draft.version}; SHA-256 ${draft.sha256}. Visible to everyone with access to that destination.\n\n${draft.body}`;
+            preview.classList.add("prose");
+          } else preview.classList.remove("prose");
+          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : a === "integrate" ? "Request integration" : a === "record_package" ? "Request package recording" : a === "recover_workflow" ? "Request inspected recovery" : a === "publish_comment" ? "Publish reviewed comment" : "Request " + a;
           submit.disabled = false;
         },
         "secondary",
@@ -1048,6 +1054,8 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
           resume: ["paused"],
           refresh_delivery: execution.delivery_targets.length ? ["planned", "running", "paused", "delivered"] : [],
           integrate: shared.integrate && ["development", "integration", "recording", "deployment", "validation", "ready"].includes(p.stage) ? ["delivered"] : [],
+          recover_workflow: ["integration", "deploying"].includes(p.stage) ? ["delivered"] : [],
+          publish_comment: shared.publication?.draft && !shared.publication.draft.attempts.length ? ["delivered"] : [],
           record_package: shared.record_package && p.stage === "recording" ? ["delivered"] : [],
         }[a].includes(p.status);
       buttons.append(b);
@@ -1102,9 +1110,9 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
     root.append(form);
   }
   root.append(node("h3", "Control requests"));
-  if (!execution.commands.some(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package"].includes(c.action)))
+  if (!execution.commands.some(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package", "recover_workflow", "publish_comment"].includes(c.action)))
     root.append(node("p", deliveryOnly ? "No delivery actions have been requested." : "No execution controls have been requested."));
-  for (const c of execution.commands.filter(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package"].includes(c.action))) {
+  for (const c of execution.commands.filter(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package", "recover_workflow", "publish_comment"].includes(c.action))) {
     const item = node("article", undefined, "card");
     item.append(
       node(
@@ -1227,4 +1235,54 @@ function sharedDelivery(p, shared) {
     details.append(form); root.append(details);
   }
   return root;
+}
+
+function publicationPanel(p, publication) {
+  const root = node("section", undefined, "delivery-shared");
+  root.append(node("h3", "Reviewed publication"), node("p",
+    "Prepare a comment for a linked PR/MR or Jira ticket. Saving shares a draft with this team. Review publication below, then explicitly publish using the owning machine's account. Comments do not approve reviews, transition tickets, merge code, or deploy.", "meta"));
+  const draft = publication.draft;
+  if (draft) {
+    root.append(node("h4", "Shared publication draft"),
+      node("p", `Shared by ${draft.shared_by} · version ${draft.version} · SHA-256 ${draft.sha256}`, "meta"),
+      node("p", draft.target.url, "meta"), node("pre", draft.body, "prose"));
+    for (const attempt of draft.attempts) {
+      root.append(node("p", `${attempt.kind === "publication_receipt" ? "Published and verified" : "Publication attempt recorded — never replayed"} · ${when(attempt.created)} · requested by ${attempt.requested_by}`));
+      if (attempt.url) {
+        const link = node("a", "Open published comment");
+        link.href = attempt.url; link.target = "_blank"; link.rel = "noopener noreferrer"; root.append(link);
+      }
+    }
+    if (draft.attempts.length && !draft.attempts.some(a => a.kind === "publication_receipt"))
+      root.append(node("p", "No verified receipt yet. If the request is uncertain, inspect the destination before local reconciliation or preparing another draft."));
+  }
+  if (member.role === "viewer" || p.status !== "delivered") return root;
+  if (!publication.targets.length) {
+    root.append(node("p", "Link a PR/MR, or sync a Jira ticket URL matching this run, before preparing publication."));
+    return root;
+  }
+  const details = node("details"), form = node("form", undefined, "composer");
+  details.append(node("summary", "Prepare publication draft"));
+  const target = select(publication.targets.map((t, i) => [String(i), `${t.provider} · ${t.url}`]));
+  const matched = publication.targets.findIndex(t => JSON.stringify(t) === JSON.stringify(draft?.target));
+  if (matched >= 0) target.value = String(matched);
+  const body = node("textarea"); body.rows = 6; body.required = true; body.maxLength = 8000;
+  body.value = draft?.body || "";
+  body.oninput = () => { form.dataset.dirty = "true"; body.style.height = "auto"; body.style.height = body.scrollHeight + "px"; };
+  target.onchange = () => { form.dataset.dirty = "true"; };
+  const bodyField = field("Exact comment text", body); bodyField.className = "wide";
+  const controls = node("div", undefined, "button-group wide");
+  controls.append(button("Expand editor", () => body.classList.toggle("expanded"), "secondary"));
+  const save = node("button", "Share publication draft"); save.type = "submit"; save.disabled = !connected;
+  controls.append(save); form.append(field("Publication destination", target), bodyField, controls);
+  form.addEventListener("commandconfirmed", event => {
+    if (event.detail.path === "workspace" && event.detail.body.action === "share_publication") delete form.dataset.dirty;
+  });
+  form.onsubmit = async e => {
+    e.preventDefault(); save.disabled = true;
+    await send("workspace", {action: "share_publication", plat: p.id, version: draft?.version || 0,
+      target: publication.targets[Number(target.value)], body: body.value});
+    save.disabled = !connected;
+  };
+  details.append(form); root.append(details); return root;
 }

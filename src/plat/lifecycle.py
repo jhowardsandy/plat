@@ -352,14 +352,24 @@ def execute_command(db, cfg, plat, lot, phase, command):
     return process.returncode, process.stdout + process.stderr
 
 
-def recover(db, plat, note, expected):
-    from .models import ExecutionClaim
-    w = locked(db, plat, expected)
-    if w.stage not in ("integration", "deploying") or not note.strip():
+def recovery_check(db, plat):
+    from .models import Attempt, ExecutionClaim
+    w = db.get(Workflow, plat.id)
+    if not w or w.stage not in ("integration", "deploying"):
         raise WorkflowError("recovery requires an interrupted integration/deployment and an inspection note")
     active = db.scalars(select(ExecutionClaim).join(Lot).where(
         Lot.plat_id == plat.id, ExecutionClaim.active.is_(True))).first()
     if active:
         raise WorkflowError("reconcile execution ownership on the owning host first")
+    if db.scalar(select(Attempt.id).join(Lot).where(
+            Lot.plat_id == plat.id, Attempt.finished_at.is_(None)).limit(1)):
+        raise WorkflowError("reconcile unfinished attempts on the owning host first")
+
+
+def recover(db, plat, note, expected):
+    w = locked(db, plat, expected)
+    recovery_check(db, plat)
+    if not note.strip():
+        raise WorkflowError("an inspection note is required")
     return save(db, plat, w, "recovery", {"note": note, "was": w.stage},
                 "deployment" if w.stage == "deploying" else "integration")
