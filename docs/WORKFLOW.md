@@ -449,3 +449,64 @@ Budget ceilings stop further dispatch between phases; an in-flight provider call
 can cross the ceiling. A final passing phase may still mark the lot DONE using
 its existing gate and verdict evidence, without another agent call. This does not
 make an overrun disappear or imply that usage dollars are actual API charges.
+
+### Delivery workspace and external review/CI observations
+
+The ticket Room now has a **Delivery** tab. It shows the current revision for each
+lot, revision freshness of integration/package/deployment/validation evidence,
+and linked GitHub PR or GitLab MR review and CI observations. The existing
+lifecycle readiness checks remain authoritative; external success never advances
+stages or replaces independent gates.
+
+Engineers and administrators can save or clear a lot's PR/MR link in Room.
+Links must match the lot's canonical repository identity. Updates use optimistic
+versions, idempotent requests, and append-only audited artifacts; replacing a link
+clears its displayed provider observation while retaining history. Viewers can
+inspect but cannot change links.
+
+Refresh status from the owning installation and laptop using its existing `gh`
+or `glab` login:
+
+```bash
+plat delivery status DEV-1234
+plat delivery link DEV-1234 api https://github.com/organization/repository/pull/123 --version 0
+plat delivery refresh DEV-1234 api
+```
+
+`--version` is the delivery link version returned by `status`, not the workflow
+version. Browser updates refresh automatically after an acknowledged link change.
+Provider status can be refreshed explicitly through the CLI or requested in the
+Delivery tab. Browser polling reads stored observations and does not contact providers. The web server never receives
+provider credentials. This slice supports github.com and gitlab.com, including
+nested GitLab groups; self-hosted providers remain future work.
+
+Observations include their timestamp and exact PR/MR head. Room warns when the
+local worktree is dirty, the observed revision differs, the CI pipeline targets a
+different commit, no CI is reported, the current revision cannot be verified, or
+the observation is older than 15 minutes. A failed refresh replaces the displayed
+success with a failure notice and exits nonzero; prior evidence remains recorded.
+Missing approval information is `unknown`, never approval. GitLab displays the
+head pipeline aggregate, while GitHub displays reported status checks. Neither
+claims completeness of branch protection or merge eligibility.
+
+Only structured status and artifact hashes are shared here. Raw provider payloads,
+logs, credentials, stage prose, prompts, and transcripts are not exposed. Refresh
+performs read-only provider operations; it does not push, merge, post comments,
+or deploy. Shared narratives remain a subsequent operator-workflow increment.
+
+In Delivery, choose **Refresh PR / CI status**, review the linked lots and machine,
+enter a reason, and select **Request status refresh**. Both the server and executor
+must run this release. A registered, online executor must own all lots in the run.
+The fixed `refresh_delivery` command reads every linked PR/MR serially on that
+machine. It never launches agents or changes the run/workflow state. The request
+is bound to the workflow version, run state, plan, budget, and exact link versions.
+Changed previews fail at acknowledgement or execution; a link changed during the
+provider read cannot be overwritten by the old result.
+
+Room shows requested, acknowledged, running, and completed/failed outcomes with
+timestamps, requester, executor, and per-lot results. Completed means the provider
+read succeeded, not that CI passed or delivery is ready. Queued requests can be
+cancelled; a lost response is retried with the same idempotency key. Disconnection
+leaves ambiguous work uncertain and requires local reconciliation; no automatic
+replay occurs. Provider failures are sanitized and visible as failed requests.
+Existing outstanding execution requests serialize refreshes with other controls.

@@ -47,7 +47,16 @@ def command(db, member, request):
             raise Conflict('idempotency key was already used for another command')
         return prior.result
     action = request.get('action')
-    if action == 'classify':
+    if action == 'delivery_link':
+        from . import delivery
+        if member.role == 'viewer':
+            raise Forbidden('viewers cannot change delivery links')
+        p = db.scalars(select(Plat).where(Plat.public_id == request.get('plat'))).first()
+        lot = db.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == request.get('lot'))).first() if p else None
+        if not lot:
+            raise ValueError('plat or lot not found')
+        result = delivery.link(db, p, lot, request.get('url'), request.get('version'), member.name)
+    elif action == 'classify':
         if member.role == 'viewer':
             raise Forbidden('viewers cannot classify repositories')
         identity = request.get('repository')
@@ -111,9 +120,11 @@ def room(db, public_id):
         raise ValueError('plat not found')
     attempts = db.scalars(select(Attempt).join(Lot).where(Lot.plat_id == p.id).order_by(Attempt.id)).all()
     ids = [a.id for a in attempts]
+    from .delivery import project as delivery_project
     from .executor import room as execution_room
     return {
         'execution': execution_room(db, p),
+        'delivery': delivery_project(db, p),
         'attempts': [{'id': a.id, 'lot': db.get(Lot, a.lot_id).key, 'phase': a.phase,
                       'attempt': a.n, 'provider': a.provider, 'model': a.model,
                       'exit_code': a.exit_code, 'started': a.started_at, 'finished': a.finished_at,
