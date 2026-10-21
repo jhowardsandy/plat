@@ -998,7 +998,7 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
   );
   if (member.role !== "viewer" && machines.length) {
     const form = node("form", undefined, "composer"),
-      buttons = node("div", undefined, "button-group");
+      buttons = node("div", undefined, "button-group wide");
     const machine = select(
       machines.map((e) => [
         e.id,
@@ -1024,9 +1024,9 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
     const submit = node("button", "Review a control first");
     submit.type = "submit";
     submit.disabled = true;
-    for (const a of deliveryOnly ? ["refresh_delivery", "integrate", "record_package", "recover_workflow", "publish_comment"] : ["start", "pause", "resume"]) {
+    for (const a of deliveryOnly ? ["refresh_delivery", "integrate", "record_package", "deploy_test", "recover_workflow", "publish_comment"] : ["start", "pause", "resume"]) {
       const b = button(
-        a === "refresh_delivery" ? "Refresh PR / CI status" : a === "integrate" ? "Run integration" : a === "record_package" ? "Record package" : a === "recover_workflow" ? "Recover workflow" : a === "publish_comment" ? "Review publication" : a[0].toUpperCase() + a.slice(1),
+        a === "refresh_delivery" ? "Refresh PR / CI status" : a === "integrate" ? "Run integration" : a === "record_package" ? "Record package" : a === "recover_workflow" ? "Recover workflow" : a === "publish_comment" ? "Review publication" : a === "deploy_test" ? "Review test deployment" : a[0].toUpperCase() + a.slice(1),
         () => {
           action = a;
           form.dataset.dirty = "true";
@@ -1034,13 +1034,17 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
           if (a === "refresh_delivery") preview.textContent = `Refresh ${execution.delivery_targets.length} linked PR/MR(s) on ${machines.find(e => e.id === machine.value)?.name}: ${execution.delivery_targets.map(t => t.lot + " · " + t.url).join("; ")}. Read provider status using that laptop's login. No agents, external writes, or workflow changes.`;
           if (a === "integrate") preview.textContent = `Run the owner-published integration recipe on ${machines.find(e => e.id === machine.value)?.name}. Recipe ${shared.integrate.version}; SHA-256 ${shared.integrate.sha256}. Commands: ${shared.integrate.checks.map(c => c.name + " (" + c.lot + "): " + c.cmd).join("; ")}. This executes the published shell checks with the machine's permissions and records independent evidence. It does not invoke Plat's deployment workflow.`;
           if (a === "record_package") preview.textContent = `Record the shared package draft ${shared.record_package.version}, SHA-256 ${shared.record_package.sha256}, on ${machines.find(e => e.id === machine.value)?.name}. The owner verifies current revisions and successful integration before advancing to deployment. This does not deploy.`;
+          if (a === "deploy_test") {
+            const recipe = shared.deploy_test;
+            preview.textContent = `Deploy to ${recipe.environment}: ${recipe.target} on ${machines.find(e => e.id === machine.value)?.name}. Lot: ${recipe.lot}. Artifact: ${recipe.artifact}. Rollback artifact: ${recipe.rollback_artifact}. Package SHA-256: ${recipe.package_hash}. Recipe ${recipe.version}; SHA-256 ${recipe.sha256}. Exact commands — deploy: ${recipe.deploy}; smoke: ${recipe.smoke}; rollback: ${recipe.rollback}. This changes the declared environment. A failed deploy or smoke invokes rollback while execution remains authorized. An interruption requires inspection; no automatic replay.`;
+          }
           if (a === "recover_workflow") preview.textContent = `Recover ${p.stage} at workflow v${p.version}. Confirm in the inspection note that the interrupted operation and environment have been checked. Active claims and unfinished attempts must be reconciled locally first. This records recovery; it does not kill processes, clear claims, run checks, or redeploy.`;
           if (a === "publish_comment") {
             const draft = shared.publication.draft;
             preview.textContent = `Post this exact comment to ${draft.target.url} using ${machines.find(e => e.id === machine.value)?.name}'s provider account. Draft ${draft.version}; SHA-256 ${draft.sha256}. Visible to everyone with access to that destination.\n\n${draft.body}`;
             preview.classList.add("prose");
           } else preview.classList.remove("prose");
-          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : a === "integrate" ? "Request integration" : a === "record_package" ? "Request package recording" : a === "recover_workflow" ? "Request inspected recovery" : a === "publish_comment" ? "Publish reviewed comment" : "Request " + a;
+          submit.textContent = a === "refresh_delivery" ? "Request status refresh" : a === "integrate" ? "Request integration" : a === "record_package" ? "Request package recording" : a === "recover_workflow" ? "Request inspected recovery" : a === "publish_comment" ? "Publish reviewed comment" : a === "deploy_test" ? "Deploy reviewed test artifact" : "Request " + a;
           submit.disabled = false;
         },
         "secondary",
@@ -1054,6 +1058,7 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
           resume: ["paused"],
           refresh_delivery: execution.delivery_targets.length ? ["planned", "running", "paused", "delivered"] : [],
           integrate: shared.integrate && ["development", "integration", "recording", "deployment", "validation", "ready"].includes(p.stage) ? ["delivered"] : [],
+          deploy_test: shared.deploy_test?.package_current && shared.deploy_test.freshness === "current" && p.stage === "deployment" ? ["delivered"] : [],
           recover_workflow: ["integration", "deploying"].includes(p.stage) ? ["delivered"] : [],
           publish_comment: shared.publication?.draft && !shared.publication.draft.attempts.length ? ["delivered"] : [],
           record_package: shared.record_package && p.stage === "recording" ? ["delivered"] : [],
@@ -1110,9 +1115,9 @@ function executionControls(p, execution, deliveryOnly = false, shared = {}) {
     root.append(form);
   }
   root.append(node("h3", "Control requests"));
-  if (!execution.commands.some(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package", "recover_workflow", "publish_comment"].includes(c.action)))
+  if (!execution.commands.some(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package", "deploy_test", "recover_workflow", "publish_comment"].includes(c.action)))
     root.append(node("p", deliveryOnly ? "No delivery actions have been requested." : "No execution controls have been requested."));
-  for (const c of execution.commands.filter(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package", "recover_workflow", "publish_comment"].includes(c.action))) {
+  for (const c of execution.commands.filter(c => !deliveryOnly || ["refresh_delivery", "integrate", "record_package", "deploy_test", "recover_workflow", "publish_comment"].includes(c.action))) {
     const item = node("article", undefined, "card");
     item.append(
       node(
@@ -1205,6 +1210,16 @@ function sharedDelivery(p, shared) {
       node("p", `Version ${recipe.version} · ${recipe.freshness} revisions · SHA-256 ${recipe.sha256}`, "meta"),
       table(["Check", "Lot", "Exact command"], recipe.checks.map(c => [c.name, c.lot, c.cmd])));
   } else root.append(node("p", "No integration recipe shared. Publish one on the owning laptop with plat delivery publish-integration."));
+  const deployment = shared.deploy_test;
+  if (deployment) {
+    root.append(node("h4", "Owner-published test deployment"),
+      node("p", `${deployment.environment} · ${deployment.target} · lot ${deployment.lot}`, "prose"),
+      node("p", `Artifact: ${deployment.artifact}\nRollback artifact: ${deployment.rollback_artifact}`, "prose"),
+      node("p", `Recipe ${deployment.version} · ${deployment.freshness} revisions · ${deployment.package_current ? "Current package" : "Stale package"} · SHA-256 ${deployment.sha256} · Package SHA-256 ${deployment.package_hash}`, "meta"),
+      table(["Step", "Exact command"], ["deploy", "smoke", "rollback"].map(k => [k, deployment[k]])));
+    if (deployment.result) root.append(node("h4", deployment.result.passed ? "Recorded deployment and smoke passed" : "Deployment failed — inspect rollback"),
+      table(["Step", "Exit code"], ["deploy", "smoke", "rollback"].filter(k => deployment.result.results[k]).map(k => [k, deployment.result.results[k].exit_code])));
+  } else root.append(node("p", "No test deployment recipe shared. After recording a package, publish one on the owning laptop with plat delivery publish-deployment."));
   const fields = {summary: "Summary", rollout: "Rollout", rollback: "Rollback", test_instructions: "Test instructions", configuration: "Configuration", risks: "Risks"};
   const draft = shared.record_package;
   if (draft) {

@@ -628,3 +628,61 @@ Only prepare a new draft after inspecting whether the original comment exists.
 A new draft is a new publication authorization and can intentionally post the
 same text again. Previous drafts, attempts, receipts, and decisions remain in
 the audit history. Both team server and executor must reload this release.
+
+### Reviewed test deployments from Room
+
+After recording a current delivery package, publish a deployment recipe from the
+installation and host that owns every lot. The recipe names one test environment,
+its concrete target (for example cluster/context and namespace), the exact
+artifact to deploy, and the artifact to restore. Use immutable image digests or
+release identifiers. Supply project-owned deploy, smoke, and rollback commands:
+
+```yaml
+environment: dev
+target: example-dev-cluster / example-service namespace
+lot: deployments
+artifact: registry.example/service@sha256:<new-digest>
+rollback_artifact: registry.example/service@sha256:<previous-digest>
+deploy: ./scripts/deploy-dev.sh <new-digest>
+smoke: ./scripts/smoke-dev.sh <new-digest>
+rollback: ./scripts/rollback-dev.sh <previous-digest>
+```
+
+```bash
+plat delivery publish-deployment DEV-1234 --file test-deployment.yaml --version 0
+plat delivery status DEV-1234
+```
+
+All eight fields are required; extra fields are rejected. Only `local`, `dev`,
+`demo`, and `beta` environment labels are accepted. Replacing a recipe requires
+its current artifact version from `delivery status`, not the workflow version.
+Publishing stores an immutable recipe bound to clean revisions, the accepted
+specification, and the exact recorded package hash. It does not deploy.
+
+In Room → Delivery, inspect **Owner-published test deployment**, then choose
+**Review test deployment**. Review the owning machine, environment and target,
+artifact, rollback artifact, package/recipe hashes, and all three exact commands.
+Enter the reason and choose **Deploy reviewed test artifact**. Only an authorized
+engineer/admin can request it; the browser cannot author shell commands. Changes
+to the recipe, package, revisions, workflow, or authorization invalidate the
+request at acknowledgement or before execution.
+
+The owning executor runs the existing claimed lifecycle deployment path. A failed
+deploy or smoke invokes the declared rollback while execution remains authorized.
+Room displays the deploy/smoke/rollback exit codes without sharing raw command
+output. A successful deployment advances to **validation**, where observed
+product behavior still needs explicit acceptance. Failed smoke or rollback does
+not imply readiness. Command acknowledgements and outcomes remain in the control
+timeline, with the requesting member and exact shared recipe recorded in evidence.
+
+An interrupted deployment stays **uncertain** with workflow stage `deploying`.
+Inspect the actual environment and owning process, reconcile the command/claims,
+then use the inspected recovery control before an explicitly requested rerun.
+There is no automatic replay after an uncertain outcome.
+
+The environment and artifact fields describe the owner-authored commands; they
+are not a shell sandbox or a registry verification service. The owner must ensure
+commands use the stated target and immutable artifact, smoke verifies the deployed
+version, and rollback restores the stated prior artifact. Keep secrets in the
+owner's local credential setup, not in the shared recipe. Coordinate shared
+environment changes across runs; execution ownership is scoped to the lot.
