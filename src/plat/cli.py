@@ -18,6 +18,7 @@ from . import prompts as P
 from . import roles as R
 from .adapters import run as run_agent
 from .config import load
+from .delivery_cli import app as delivery_app
 from .executor_cli import app as executor_app
 from .fsm import LotState
 from .models import Artifact, Attempt, Criterion, Decision, Lot, Plat
@@ -27,6 +28,7 @@ from .workflow_cli import session_app
 
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False,
                   help="Plat - one ticket, many lots, one instrument.")
+app.add_typer(delivery_app, name="delivery")
 app.add_typer(team_app, name="team")
 app.add_typer(executor_app, name="executor")
 app.add_typer(workflow_app, name="workflow")

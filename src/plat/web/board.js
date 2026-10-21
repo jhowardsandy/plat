@@ -614,6 +614,7 @@ function renderRoom() {
   const tabs = node("div", undefined, "button-group tabs");
   for (const t of [
     "overview",
+    "delivery",
     "evidence",
     "sessions",
     "decisions",
@@ -670,6 +671,8 @@ function renderRoom() {
         "meta",
       ),
     );
+  } else if (roomTab === "delivery") {
+    root.append(deliveryPanel(p, r.delivery));
   } else if (roomTab === "execution") {
     root.append(executionControls(p, r.execution));
   } else if (roomTab === "evidence") {
@@ -1126,6 +1129,55 @@ function executionControls(p, execution) {
         ),
       );
     root.append(item);
+  }
+  return root;
+}
+
+function deliveryPanel(p, d) {
+  const root = node("section");
+  root.append(node("h3", "Delivery workspace"), node("p",
+    d.readiness.ready ? "Lifecycle evidence complete" : d.readiness.missing.join(" · ")));
+  root.append(node("p", "External review and CI are observations, not Plat gate results. Refresh on the owning laptop; observations older than 15 minutes are flagged.", "meta"));
+  root.append(table(["Evidence", "Status", "Version", "SHA-256"],
+    d.stages.map(s => [s.stage === "recording" ? "Delivery package" : s.stage, s.status, s.version, s.sha256])));
+  const integration = d.stages.find(s => s.stage === "integration");
+  if (integration?.checks?.length) root.append(node("h4", "Recorded integration checks"),
+    table(["Check", "Exit code"], integration.checks.map(c => [c.name, c.exit_code])));
+  for (const lot of d.lots) {
+    const card = node("section", undefined, "item");
+    card.append(node("h3", lot.key), node("p", lot.revision
+      ? lot.revision.commit + (lot.revision.dirty ? " · uncommitted changes" : " · clean")
+      : "Current revision unavailable", "meta"));
+    if (lot.url) {
+      const a = node("a", lot.url); a.href = lot.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+      card.append(a);
+    }
+    const o = lot.observation;
+    if (o.observed_at) card.append(node("p", "Last observed: " + when(o.observed_at), "meta"));
+    if (o.head) card.append(table(["PR/MR", "Review", "Head revision"],
+      [[o.state + (o.draft ? " · draft" : ""), o.review, o.head]]));
+    if (o.checks?.length) card.append(table(["CI check", "Observed result"], o.checks.map(c => [c.name, c.status])));
+    for (const warning of lot.warnings) card.append(node("p", warning, "error"));
+    card.append(node("p", "Refresh from the owning laptop:"), node("code", "plat delivery refresh " + p.id + " " + lot.key));
+    if (member.role !== "viewer") {
+      const form = node("form"), input = textInput(lot.url || "", 500);
+      input.type = "url"; input.required = false;
+      form.append(field("GitHub PR / GitLab MR URL (clear to unlink)", input));
+      form.addEventListener("input", () => form.dataset.dirty = "true");
+      const save = node("button", "Save link", "secondary"); save.type = "submit";
+      save.disabled = !connected; form.append(save);
+      form.addEventListener("commandconfirmed", event => {
+        if (event.detail.path === "workspace" && event.detail.body.action === "delivery_link" && event.detail.body.lot === lot.key)
+          delete form.dataset.dirty;
+      });
+      form.onsubmit = async e => {
+        e.preventDefault(); save.disabled = true;
+        await send("workspace", {action: "delivery_link", plat: p.id, lot: lot.key, url: input.value.trim(), version: lot.version});
+        save.disabled = !connected;
+      };
+      card.append(form);
+    }
+    root.append(card);
   }
   return root;
 }
