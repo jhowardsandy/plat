@@ -7,7 +7,7 @@ import yaml
 from sqlalchemy import select
 
 from . import db as DB
-from . import guidance
+from . import guidance, planning
 from . import lifecycle as L
 from .config import load
 from .models import Lot, TrackedSession, Workflow
@@ -64,7 +64,7 @@ def status(anchor: str):
         p = resolve(db, anchor)
         w = db.get(Workflow, p.id)
         output({'stage': w.stage if w else 'legacy', 'version': w.version if w else None,
-                'readiness': L.readiness(db, p), 'guidance': guidance.project(db, p)})
+                'readiness': L.readiness(db, p), 'guidance': guidance.project(db, p), 'planning': planning.project(db, p)})
 
 
 @app.command()
@@ -185,10 +185,10 @@ def migrate_host(anchor: str, lot: str, note: str = typer.Option(...)):
 
 @app.command('revise')
 def revise_stage(anchor: str, stage: str, note: str = typer.Option(...),
-                 version: int = typer.Option(...)):
+                 version: int = typer.Option(...), share: bool = typer.Option(False, "--share", help="Show the revision reason in Room")):
     """Return unstarted guided work to an earlier stage, preserving its history."""
     with DB.session() as db:
-        row = guidance.revise(db, resolve(db, anchor), stage, note, version)
+        row = guidance.revise(db, resolve(db, anchor), stage, note, version, share=share)
         output({'stage': stage, 'version': row.version})
 
 
@@ -199,3 +199,21 @@ def record_check(anchor: str, check: str, file: Path = typer.Option(..., exists=
     with DB.session() as db:
         row = guidance.record_check(db, resolve(db, anchor), check, input_file(file), version)
         output({'check': check, 'version': row.version, 'sha256': row.sha256})
+
+
+@app.command('share')
+def share_stage(anchor: str, stage: str, file: Path = typer.Option(..., exists=True),
+                version: int = typer.Option(...), draft_version: int = typer.Option(0)):
+    """Share a stage draft with the team; planning also publishes the registered plan."""
+    with DB.session() as db:
+        output(planning.share(db, resolve(db, anchor), stage, input_file(file), version,
+                              draft_version, publish_plan=stage == 'planning'))
+
+
+@app.command('accept-shared')
+def accept_shared(anchor: str, stage: str, version: int = typer.Option(...),
+                  draft_version: int = typer.Option(...), sha256: str = typer.Option(...)):
+    """Accept exactly the shared draft reviewed in Room or workflow status."""
+    with DB.session() as db:
+        row = planning.accept(db, resolve(db, anchor), stage, version, draft_version, sha256)
+        output({'version': row.version, 'sha256': row.sha256})

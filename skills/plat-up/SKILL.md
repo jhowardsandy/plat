@@ -195,3 +195,14 @@ coverage (including new tests or why existing tests suffice), engineer review,
 implementation conformance, documentation, MR, and communication evidence.
 Record a reason for items that do not apply. Never mark external actions as done
 merely because a checklist was recorded.
+
+## Shared review in Plat Room
+
+When the engineer wants team/browser review, use `workflow share` for the current
+stage, with current workflow and draft versions. Shared drafts and `accept-shared`
+are available in both interfaces. Save is not approval. For planning, explicitly
+publish the registered plan with `workflow share planning`; this shares its scopes,
+gate commands, criteria, and approved behavior specification. Exclude secrets.
+Room edits rationale/alignment and records approval; worktree materialization and
+command registration remain on the owning laptop. Read workflow status after a
+Room decision instead of submitting duplicate approval from the chat.

@@ -76,7 +76,7 @@ def planning(db, plat, data):
     return {**data, 'specification_hash': spec.sha256, 'plan_hash': L.current_spec(db, plat)}
 
 
-def revise(db, plat, stage, note, expected):
+def revise(db, plat, stage, note, expected, *, who=None, share=False):
     w = L.locked(db, plat, expected)
     stages = ('context', 'definition', 'specification', 'planning', 'development')
     if not guided(w) or stage not in stages[:-1] or w.stage not in stages:
@@ -94,7 +94,7 @@ def revise(db, plat, stage, note, expected):
         raise L.WorkflowError('stop active work; started scope remains immutable, use a new plat for changed scope')
     # This is flushed by save's audited decision transaction, never independently.
     w.spec_hash = None
-    return L.save(db, plat, w, 'revision', {'note': note, 'from': w.stage, 'to': stage}, stage)
+    return L.save(db, plat, w, 'revision', {'note': note, 'from': w.stage, 'to': stage, 'shared': share}, stage, who=who, human=True)
 
 
 def record_check(db, plat, check, data, expected, *, who=None):
