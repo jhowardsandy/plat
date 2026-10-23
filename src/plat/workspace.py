@@ -47,7 +47,20 @@ def command(db, member, request):
             raise Conflict('idempotency key was already used for another command')
         return prior.result
     action = request.get('action')
-    if action == 'share_publication':
+    if action == 'record_guidance':
+        from . import guidance
+        if not member.active or member.role not in ('engineer', 'admin'):
+            raise Forbidden('an active engineer or administrator is required')
+        if type(request.get('version')) is not int:
+            raise ValueError('current workflow version is required')
+        p = db.scalars(select(Plat).where(Plat.public_id == request.get('plat'))).first()
+        if not p:
+            raise ValueError('plat not found')
+        if not isinstance(request.get('evidence'), dict) or not isinstance(request.get('check'), str):
+            raise ValueError('check and evidence are required')
+        row = guidance.record_check(db, p, request['check'], request['evidence'], request['version'], who=member.name)
+        result = {'version': row.version, 'sha256': row.sha256}
+    elif action == 'share_publication':
         from . import publication
         if not member.active or member.role not in ('engineer', 'admin'):
             raise Forbidden('an active engineer or administrator is required')
@@ -140,8 +153,10 @@ def room(db, public_id):
     from .delivery import project as delivery_project
     from .delivery_actions import project as action_project
     from .executor import room as execution_room
+    from .guidance import project as guidance_project
     from .publication import project as publication_project
     return {
+        'guidance': guidance_project(db, p),
         'execution': execution_room(db, p),
         'delivery': delivery_project(db, p),
         'delivery_actions': {**action_project(db, p), 'publication': publication_project(db, p)},

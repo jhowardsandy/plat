@@ -49,6 +49,20 @@ This is a conversation, not a form. Establish:
 
 Ask about anything genuinely ambiguous. Do not invent requirements the ticket does not contain — if something is underspecified, say so and ask.
 
+### 3a. Approve the behavior specification before planning implementation
+
+For new work, use `plat workflow begin <TICKET> --owner <responsible-person>`;
+this defaults to the guided process. Collect and accept context and definition,
+then write a behavior specification with `note`, `behavior`, `outcomes` (unique
+`id` and `statement` pairs), `exclusions`, and resolved `open_questions`.
+Review it with the engineer and cycle until approved before accepting
+`specification`. CLI acceptance is sufficient; use explicit approval already given
+in the conversation. For revisions use `workflow revise` with the current version
+and reason. Do not infer approval from silence.
+
+Inspect `workflow status` for existing runs; preserve classic semantics. A classic
+workflow remains available with `workflow begin --classic` when appropriate.
+
 ### 4. Force every acceptance criterion into a checkable form
 
 **An AC that cannot be checked cannot gate a state machine.** For each one, write a `verify` command if one can exist:
@@ -153,7 +167,7 @@ plat plan $ROOT/.worktrees/<TICKET>.plat.yaml --commit
 
 Verify `plat workflow status <TICKET>` and `plat status <TICKET> --all` after
 registration. Compare the recorded lot keys and repositories with the approved spec.
-For full-lifecycle work, accept the specification as described below. Include the
+For guided work, accept `planning` with the engineer’s rationale and an `alignment` mapping from every approved outcome ID to criterion IDs. Every criterion must be mapped. For existing classic work, accept `specification` as before. Include the
 spec path, current workflow stage/version, registered lot keys and database destination
 (without credentials) in the handoff. An empty table is not a completed handoff.
 If a team service is configured, verify its live board contains the same run and lots;
@@ -169,15 +183,15 @@ Tell the user it is ready and that `/plat-run <TICKET>` starts it. **Do not star
 
 ## Full lifecycle acceptance
 
-For new work intended to proceed through test deployment and delivery readiness,
-start with `plat workflow begin <TICKET> --owner <responsible-person>`. Snapshot the
-collected context and accepted definition using `workflow accept` before committing
-the plan. After `plat plan --commit`, accept the exact specification snapshot with
-a rationale before starting. Use the current version from `workflow status` for
-each acceptance; stale versions fail safely. The field formats and complete command
-sequence are in `docs/WORKFLOW.md`.
+New work follows context → definition → specification → planning → development.
+The behavior specification is approved before the executable plan. After the
+engineer approves the plan and `plat plan --commit` records it, accept `planning`
+with `note` and `alignment`, using the current workflow version. An unstarted
+plan revision invalidates plan approval. Use `workflow revise` to revisit earlier
+inputs and preserve the decision history. See `docs/WORKFLOW.md` for exact examples.
 
-Use the same working-note location and preserve source references, unavailable
-sources, unanswered questions and explicit exclusions. Do not declare acceptance
-for unanswered blocking questions. Existing authorization in the conversation can
-supply acceptance; do not ask again merely because this is a different command.
+After development, use the advisory handoff checklist to record meaningful test
+coverage (including new tests or why existing tests suffice), engineer review,
+implementation conformance, documentation, MR, and communication evidence.
+Record a reason for items that do not apply. Never mark external actions as done
+merely because a checklist was recorded.

@@ -2,7 +2,7 @@
 
 **One ticket, divided into numbered lots, worked by agents across repos, reviewed by a different model than wrote it, and recorded as a single instrument.**
 
-Plat is a deterministic orchestrator for coding agents. You plan a ticket into *lots*; Plat runs each one through code → gate → review → fix, escalating models on retry, and stops at a human whenever it should. Every decision — by the system, by an agent, by you — is recorded and queryable long after the branch is gone.
+Plat guides engineers from understanding a ticket through reviewed delivery, keeping the engineer responsible for what is built. Its execution engine is a deterministic orchestrator for coding agents. You plan a ticket into *lots*; Plat runs each one through code → gate → review → fix, escalating models on retry, and stops at a human whenever it should. Every decision — by the system, by an agent, by you — is recorded and queryable long after the branch is gone.
 
 ```
 $ plat status --watch
@@ -127,6 +127,8 @@ Plat calls this **API-equivalent cost**, and that is the label you will see in
 tokens, so theirs is estimated from published rates and shown with a `~`.
 
 ## Full workflow and team collaboration
+
+New guided workflows separate behavior specification approval from executable plan approval, with revision cycles and an advisory engineer handoff checklist in Room and the CLI. CLI acceptance is sufficient; existing workflows remain compatible.
 
 The local development loop now extends through accepted context and specification,
 independent integration checks, a recorded delivery package, explicit test deployment,

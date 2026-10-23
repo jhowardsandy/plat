@@ -79,16 +79,17 @@ def revisions(db, plat):
     return out
 
 
-def begin(db, plat, owner):
+def begin(db, plat, owner, *, guided=False):
     if db.get(Workflow, plat.id):
         raise WorkflowError('workflow already exists')
     if plat.status != 'planned':
         raise WorkflowError('begin the lifecycle before development')
     if not owner.strip():
         raise WorkflowError('a responsible owner is required')
-    w = Workflow(plat_id=plat.id, owner=owner, stage='context', version=0)
+    w = Workflow(plat_id=plat.id, owner=owner, stage='context', version=0,
+                 requirements={'process': 'guided-v1'} if guided else {})
     record(db, plat_id=plat.id, actor='human', actor_detail=actor(), kind='workflow',
-           decision='full lifecycle enabled', inputs={'owner': owner}, apply=lambda: db.add(w))
+           decision='full lifecycle enabled', inputs={'owner': owner, 'process': 'guided-v1' if guided else 'classic'}, apply=lambda: db.add(w))
     return w
 
 
@@ -106,7 +107,7 @@ def locked(db, plat, expected=None):
     return w
 
 
-def save(db, plat, w, stage, content, next_stage, *, who=None):
+def save(db, plat, w, stage, content, next_stage, *, who=None, human=False):
     row = StageRecord(plat_id=plat.id, stage=stage, version=w.version + 1,
                       content=content, sha256=digest(content), actor=who or actor())
     def apply():
@@ -114,7 +115,7 @@ def save(db, plat, w, stage, content, next_stage, *, who=None):
         w.stage = next_stage
         w.updated_at = datetime.now(timezone.utc)
         db.add(row)
-    record(db, plat_id=plat.id, actor='human' if who is None else 'system',
+    record(db, plat_id=plat.id, actor='human' if who is None or human else 'system',
            actor_detail=who or actor(), kind='workflow', decision=f'{stage} recorded; next: {next_stage}',
            inputs={'version': row.version, 'sha256': row.sha256}, apply=apply)
     return row
@@ -149,6 +150,15 @@ def accept(db, plat, stage, data, expected):
         if data.get('open_questions'):
             raise WorkflowError('answer definition questions before accepting')
         next_stage = 'specification'
+    elif stage == 'specification' and (w.requirements or {}).get('process') == 'guided-v1':
+        from .guidance import specification
+        data = specification(db, plat, data)
+        next_stage = 'planning'
+    elif stage == 'planning' and (w.requirements or {}).get('process') == 'guided-v1':
+        from .guidance import planning
+        data = planning(db, plat, data)
+        w.spec_hash = data['plan_hash']
+        next_stage = 'development'
     elif stage == 'specification':
         _required(data, 'note')
         spec_hash = current_spec(db, plat)
@@ -184,7 +194,7 @@ def accept(db, plat, stage, data, expected):
 def require_accepted(db, plat):
     w = db.get(Workflow, plat.id)
     if w and (w.stage != 'development' or w.spec_hash != current_spec(db, plat)):
-        raise WorkflowError('accept the current context, definition, and specification before starting')
+        raise WorkflowError('accept the current workflow inputs before starting; see workflow status for the next step')
 
 
 def integration(db, cfg, plat, commands, expected):

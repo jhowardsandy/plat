@@ -486,7 +486,7 @@ def test_context_can_be_recorded_before_a_plan(case):
 
     from plat import cli, workflow_cli
     with patch.object(workflow_cli,'load',lambda:case.cfg):
-        result=CliRunner().invoke(cli.app,['workflow','begin','fix_m0-test','--owner','justin'])
+        result=CliRunner().invoke(cli.app,['workflow','begin','fix_m0-test','--owner','justin','--classic'])
     assert result.exit_code==0,result.output
     assert not rows(Lot)
     with DB.session() as db:

@@ -651,6 +651,14 @@ function renderRoom() {
         ]),
       ),
     );
+    if (r.guidance) {
+      root.append(node("h3", "Guided workflow"), node("p", r.guidance.next_step));
+      root.append(node("p", "CLI acceptance is supported. Handoff checks guide the engineer; they do not authorize external actions or block execution.", "meta"));
+      root.append(table(["Handoff check", "Evidence", "Recorded by"],
+        r.guidance.checks.map(c => [c.title, c.status.replaceAll("_", " "), c.actor || "—"])));
+      root.append(guidanceForm(p, r.guidance));
+      root.append(node("p", "Record evidence with plat workflow check; use plat workflow status for the current version. Recorded means engineer-attested; stale evidence needs review.", "meta"));
+    }
     root.append(node("h3", "Delivery readiness"));
     root.append(
       node(
@@ -667,7 +675,7 @@ function renderRoom() {
     root.append(
       node(
         "p",
-        "Use the Execution tab to request Start, Pause, or Resume on the owning machine. Deployment remains a local CLI operation.",
+        "Use the Execution tab to request Start, Pause, or Resume on the owning machine. Use the Delivery tab for reviewed integration, deployment, and publication.",
         "meta",
       ),
     );
@@ -1297,6 +1305,44 @@ function publicationPanel(p, publication) {
     e.preventDefault(); save.disabled = true;
     await send("workspace", {action: "share_publication", plat: p.id, version: draft?.version || 0,
       target: publication.targets[Number(target.value)], body: body.value});
+    save.disabled = !connected;
+  };
+  details.append(form); root.append(details); return root;
+}
+
+
+function guidanceForm(p, guidance) {
+  const root = node("section");
+  if (member.role === "viewer" || p.status !== "delivered" || p.stage === "local development") return root;
+  const details = node("details"); details.append(node("summary", "Record handoff evidence"));
+  const form = node("form", undefined, "composer");
+  const check = node("select");
+  guidance.checks.forEach(c => { const o = node("option", c.title); o.value = c.key; check.append(o); });
+  const disposition = node("select");
+  [["recorded", "Evidence recorded"], ["not_applicable", "Does not apply — explain why"]].forEach(([value, label]) => {
+    const o = node("option", label); o.value = value; disposition.append(o);
+  });
+  const note = node("textarea"); note.rows = 4; note.required = true;
+  const refs = node("textarea"); refs.rows = 2; refs.placeholder = "One reference per line";
+  for (const input of [note, refs]) input.oninput = () => {
+    form.dataset.dirty = "true"; input.style.height = "auto"; input.style.height = input.scrollHeight + "px";
+  };
+  for (const input of [check, disposition]) input.onchange = () => { form.dataset.dirty = "true"; };
+  form.append(field("Check", check), field("Disposition", disposition));
+  for (const [label, input] of [["Evidence or reason", note], ["References", refs]]) {
+    const f = field(label, input); f.className = "wide"; form.append(f);
+  }
+  const controls = node("div", undefined, "button-group wide");
+  controls.append(button("Expand editor", () => [note, refs].forEach(i => i.classList.toggle("expanded")), "secondary"));
+  const save = node("button", "Record evidence"); save.type = "submit"; save.disabled = !connected; controls.append(save);
+  form.append(controls, node("p", "Records your observation against the current revisions. It does not run checks or publish externally. Notes remain in the workflow record; Room shows status and attribution.", "meta wide"));
+  form.addEventListener("commandconfirmed", event => {
+    if (event.detail.path === "workspace" && event.detail.body.action === "record_guidance") delete form.dataset.dirty;
+  });
+  form.onsubmit = async e => {
+    e.preventDefault(); save.disabled = true;
+    await send("workspace", {action: "record_guidance", plat: p.id, version: p.version, check: check.value,
+      evidence: {disposition: disposition.value, note: note.value, references: refs.value.split("\n").map(r => r.trim()).filter(Boolean)}});
     save.disabled = !connected;
   };
   details.append(form); root.append(details); return root;
