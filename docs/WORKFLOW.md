@@ -26,35 +26,42 @@ Skills are packaged in wheels as well as editable installs. Claude links go in
 Existing unrelated directories or links are preserved. Use `--provider claude`
 or `--provider codex` to select one installation target.
 
-## Context, definition, planning, specification
+## Guided context, specification, and plan approval
 
-Start before writing code:
+Plat helps engineers understand and deliver the work they are building. New
+`workflow begin` commands use the guided process: collect context, clarify the
+outcome, approve the behavior specification, then approve the executable plan.
+CLI acceptance is a sufficient human decision. The engineer can ask for revisions
+until each artifact is ready; no separate authenticated approval service is required.
+Existing workflows retain their combined specification/plan acceptance. Use
+`workflow begin --classic` when that lighter process is appropriate.
 
 ```sh
 plat workflow begin DEV-123 --owner justin --title 'The requested change'
 plat workflow accept DEV-123 context --file context.yaml --version 0
 plat workflow accept DEV-123 definition --file definition.yaml --version 1
+plat workflow accept DEV-123 specification --file specification.yaml --version 2
 plat plan plat.yaml --commit
-plat workflow accept DEV-123 specification --file acceptance.yaml --version 2
+plat workflow accept DEV-123 planning --file plan-acceptance.yaml --version 3
 plat start DEV-123
 ```
 
-Working files remain in your notes location. Accepted input is snapshotted in
-Postgres. Versions are optimistic concurrency checks, not stage numbers: use
-`plat workflow status DEV-123` after any revision or recovery to obtain the current
-version. A stale submission fails instead of overwriting someone else's decision.
+Use `plat workflow status DEV-123` for the actual version and next step after any
+change. Versions are concurrency guards, not fixed stage numbers. Working notes
+stay in your notes location; accepted snapshots and decisions are retained in Postgres.
+The worktrees live under `.worktrees/DEV-123/<lot-key>` for each participating repo.
 
 `context.yaml`:
 
 ```yaml
-summary: Explain the ticket, affected repositories, and existing behavior.
+summary: Explain the ticket and existing behavior.
 sources:
   - reference: 'ticket:DEV-123'
     status: collected
-    snapshot: The relevant ticket contents, including requirements and constraints.
+    snapshot: The relevant requirements and constraints.
   - reference: 'design:optional-reference'
     status: unavailable
-    reason: Explain the missing source and why it does not block this scope.
+    reason: Explain why this missing source does not block the scope.
 blockers: []
 ```
 
@@ -63,16 +70,77 @@ blockers: []
 ```yaml
 problem: Describe the observed problem.
 outcome: Describe the behavior we need.
-scope: List the included and excluded changes.
-success_measures: [A measurable result tied to the acceptance criteria]
+scope: List included and excluded changes.
+success_measures: [A measurable result]
 open_questions: []
 ```
 
-`acceptance.yaml` contains `note: <why this scope is accepted>`. Specification
-acceptance binds the current plan hash and accepted context/definition hashes.
-Starting is blocked until these inputs are accepted. Revising an unstarted plan
-invalidates its prior specification acceptance. Started scope remains immutable;
-use a new anchor for scope changes.
+`specification.yaml` describes behavior before implementation planning:
+
+```yaml
+note: Engineer reviewed and approved this behavior.
+behavior: Describe what the change will do and its important contracts.
+outcomes:
+  - id: O1
+    statement: The ticket outcome this work must satisfy.
+exclusions: Explicitly excluded behavior, or None.
+open_questions: []
+```
+
+After preparing, reviewing, and committing `plat.yaml`, `plan-acceptance.yaml`:
+
+```yaml
+note: Engineer reviewed scope, repos, dependencies, tests, and rollout implications.
+alignment:
+  O1: [AC1]
+```
+
+Every outcome maps to existing criterion IDs, and every criterion belongs to at
+least one outcome. This establishes traceability; the engineer and reviewers still
+judge whether those criteria actually satisfy the ticket. A command returning zero
+is not a substitute for choosing meaningful tests.
+
+Before execution, request a revision with an explanation:
+
+```sh
+plat workflow revise DEV-123 specification --note 'Clarify failure behavior' --version 4
+plat workflow status DEV-123
+```
+
+Revision can return to context, definition, specification, or planning. Subsequent
+stages must be accepted again. History is preserved. Recommitting an unstarted
+executable plan invalidates plan acceptance but keeps the behavior specification.
+Started scope remains immutable; use a new plat for changed scope, and reopen lots
+for implementation fixes within approved scope.
+
+Classic workflows continue to accept `specification` with `note: <rationale>` after
+`plat plan --commit`, then advance directly to development. Skills must inspect the
+recorded process and never reinterpret an existing classic run as guided work.
+
+## Engineer handoff checklist
+
+Room and `workflow status` show six advisory checks: testing, engineer review,
+conformance, documentation, merge request, and communication. Record concrete
+observations after local delivery using the expandable Room editor or the CLI:
+
+```sh
+plat workflow check DEV-123 testing --file testing-evidence.yaml --version 4
+```
+
+```yaml
+disposition: recorded
+note: Added a regression test for O1; the independent AC1 check passed.
+references: ['tests/test_behavior.py', 'criterion:AC1']
+```
+
+Use `disposition: not_applicable` with a reason when a check does not apply.
+The supported check names are `testing`, `engineer_review`, `conformance`,
+`documentation`, `merge_request`, and `communication`. Each entry binds to the
+current clean worktree revisions and accepted executable plan. Changes make it
+stale. Recording a checklist entry does not run tests, create an MR, publish a
+message, grant approval to an external action, or replace independent delivery
+checks. Pending items guide the engineer and do not introduce new execution or
+publication restrictions. CLI notes remain attributed to the local actor.
 
 ## Execution and sessions
 

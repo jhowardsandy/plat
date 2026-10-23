@@ -668,7 +668,7 @@ def plan(spec: Path, dry_run: bool = typer.Option(True, "--dry-run/--commit")):
             from .models import Workflow
             workflow = s.get(Workflow, p.id)
             if workflow and workflow.spec_hash and workflow.spec_hash != hashlib.sha256(yaml.safe_dump(d, sort_keys=False).encode()).hexdigest():
-                workflow.stage = "specification"
+                workflow.stage = "planning" if (workflow.requirements or {}).get("process") == "guided-v1" else "specification"
                 workflow.spec_hash = None
                 workflow.version += 1
             keep = {item["key"] for item in d["lots"]}

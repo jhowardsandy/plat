@@ -42,8 +42,10 @@ If the plan is missing or has no lots:
 - Run `plat plan <spec> --commit` only for the exact scope already authorized by
   the user. This runs the gate smoke checks and registers the lots, criteria and
   plan snapshot. If scope has not been approved, return to the planning handoff.
-- Accept the resulting specification with the existing approval rationale and
-  current version. Re-read workflow and lot status before executing.
+- Inspect the process in `workflow status`. For guided work, require the approved
+  behavior specification and accept `planning` with its outcome-to-criterion
+  alignment. For classic work, accept `specification` with the existing approval
+  rationale. Use the current version; do not fabricate missing approval. Re-read workflow and lot status before executing.
 
 Do not recommit an existing matching plan, revise started work, or convert a legacy
 run to full lifecycle automatically. A mismatch needs reconciliation against the
@@ -132,9 +134,9 @@ plat ui        # Plat Room on :3033 — live lots, decision record, event tail
 
 ## Full lifecycle and team work
 
-Check `plat workflow status <TICKET>` as well as the lot board. When a full lifecycle
-is enabled, accepted context, definition and specification are prerequisites for
-`start`; local delivery alone is not readiness. After development, follow the
+Check `plat workflow status <TICKET>` as well as the lot board. For guided work, accepted context, definition, behavior specification, and
+executable plan are prerequisites for `start`; classic work keeps its combined
+specification/plan acceptance; local delivery alone is not readiness. After development, follow the
 versioned `workflow integrate`, `accept recording`, `deploy`, and `accept validation`
 steps in `docs/WORKFLOW.md`. Record only evidence that was actually observed.
 Deployment requires the user's chosen target and authorization to execute its
@@ -147,3 +149,10 @@ interactive writer must be stopped and reconciled before automated execution.
 For an expired execution claim, reconcile on the owner installation before reopen.
 Never inspect or signal a PID belonging to another host. External messages and
 production deployment remain separate actions.
+
+After local delivery, walk through `workflow status` guidance with the engineer.
+Record `workflow check` evidence for testing, engineer_review, conformance,
+documentation, merge_request, and communication as each is actually completed.
+These checks are advisory and CLI acceptance is sufficient. Use not_applicable
+with a reason where appropriate. Do not equate checklist recording with running
+tests or publishing externally. Keep the engineer informed of pending items.

@@ -7,6 +7,7 @@ import yaml
 from sqlalchemy import select
 
 from . import db as DB
+from . import guidance
 from . import lifecycle as L
 from .config import load
 from .models import Lot, TrackedSession, Workflow
@@ -32,7 +33,8 @@ def input_file(path):
 
 
 @app.command()
-def begin(anchor: str, owner: str = typer.Option(...), title: str = ""):
+def begin(anchor: str, owner: str = typer.Option(...), title: str = "",
+          guided: bool = typer.Option(True, "--guided/--classic", help="Separate specification and plan approvals for new work")):
     from .models import Plat
     from .spec import NAME
     if not NAME.fullmatch(anchor) or len(anchor) > 160:
@@ -44,7 +46,7 @@ def begin(anchor: str, owner: str = typer.Option(...), title: str = ""):
         if not p:
             p = Plat(anchor=anchor, title=title, origin_id=cfg.origin_id, status="planned")
             db.add(p); db.flush()
-        w = L.begin(db, p, owner)
+        w = L.begin(db, p, owner, guided=guided)
         output({'stage': w.stage, 'version': w.version})
 
 
@@ -62,7 +64,7 @@ def status(anchor: str):
         p = resolve(db, anchor)
         w = db.get(Workflow, p.id)
         output({'stage': w.stage if w else 'legacy', 'version': w.version if w else None,
-                'readiness': L.readiness(db, p)})
+                'readiness': L.readiness(db, p), 'guidance': guidance.project(db, p)})
 
 
 @app.command()
@@ -179,3 +181,21 @@ def migrate_host(anchor: str, lot: str, note: str = typer.Option(...)):
         row = db.scalars(select(Lot).where(Lot.plat_id == p.id, Lot.key == lot)).one()
         changed = migrate_host(db, load(), p, row, note)
         output({'lot': row.key, 'migrated': changed})
+
+
+@app.command('revise')
+def revise_stage(anchor: str, stage: str, note: str = typer.Option(...),
+                 version: int = typer.Option(...)):
+    """Return unstarted guided work to an earlier stage, preserving its history."""
+    with DB.session() as db:
+        row = guidance.revise(db, resolve(db, anchor), stage, note, version)
+        output({'stage': stage, 'version': row.version})
+
+
+@app.command('check')
+def record_check(anchor: str, check: str, file: Path = typer.Option(..., exists=True),
+                 version: int = typer.Option(...)):
+    """Record attributed handoff evidence or a reason an advisory item does not apply."""
+    with DB.session() as db:
+        row = guidance.record_check(db, resolve(db, anchor), check, input_file(file), version)
+        output({'check': check, 'version': row.version, 'sha256': row.sha256})
