@@ -340,7 +340,7 @@ function render() {
           l.executor?.reconciliation_required
             ? "Interrupted · reconcile"
             : l.state,
-          l.next_step || "Register the planned lots",
+          p.planning_next_step || l.next_step || "Register the planned lots",
         ]),
       ),
     );
@@ -614,6 +614,7 @@ function renderRoom() {
   const tabs = node("div", undefined, "button-group tabs");
   for (const t of [
     "overview",
+    "planning",
     "delivery",
     "evidence",
     "sessions",
@@ -679,6 +680,8 @@ function renderRoom() {
         "meta",
       ),
     );
+  } else if (roomTab === "planning") {
+    root.append(planningPanel(p, r.planning));
   } else if (roomTab === "delivery") {
     root.append(deliveryPanel(p, r.delivery), sharedDelivery(p, r.delivery_actions), publicationPanel(p, r.delivery_actions.publication), executionControls(p, r.execution, true, r.delivery_actions));
   } else if (roomTab === "execution") {
@@ -1346,4 +1349,139 @@ function guidanceForm(p, guidance) {
     save.disabled = !connected;
   };
   details.append(form); root.append(details); return root;
+}
+
+function planningPanel(p, shared) {
+  const root = node("section");
+  root.append(node("h3", "Understand, specify, and plan"));
+  if (!shared?.enabled) {
+    root.append(node("p", "This run uses the classic workflow. Continue its existing CLI acceptance process. New guided work starts with plat workflow begin."));
+    return root;
+  }
+  root.append(node("p", "Share a draft to discuss it, then accept the exact saved revision when ready. CLI and Room use the same approvals and evidence. Shared text is visible to your team; keep credentials and private transcripts out of it.", "meta"));
+  if (shared.revision) root.append(node("h4", "Latest requested revision"),
+    node("p", `${shared.revision.actor} requested ${shared.revision.to} changes at v${shared.revision.version}: ${shared.revision.note}`, "prose"));
+  const stage = shared.stage;
+  const stages = ["context", "definition", "specification", "planning"];
+  for (const name of stages) {
+    const draft = shared.drafts[name];
+    if (!draft || name === stage) continue;
+    const history = node("details"); history.append(node("summary", "Shared " + name + " · draft " + draft.draft_version));
+    for (const [key,value] of Object.entries(draft.fields)) {
+      history.append(node("h4", key.replaceAll("_", " ")));
+      if (Array.isArray(value)) for (const entry of value) history.append(node("p", typeof entry === "string" ? entry : Object.entries(entry).map(([k,v]) => k + ": " + v).join("\n"), "prose"));
+      else history.append(node("p", typeof value === "object" ? Object.entries(value).map(([k,v]) => k + ": " + v.join(", ")).join("\n") : value, "prose"));
+    }
+    root.append(history);
+  }
+  if (!stages.includes(stage) || p.status !== "planned") {
+    root.append(node("p", stage === "development" ? "Planning accepted. Use Execution to start the registered lots; the CLI can start them too." : "Planning is complete for this run."));
+  } else {
+    const draft = shared.drafts[stage];
+    const values = draft?.fields || {};
+    root.append(node("h4", "Review " + stage), node("p", `Workflow v${shared.version} · ${draft ? "Draft " + draft.draft_version + " shared by " + draft.shared_by + (draft.current ? " · current" : " · needs review and re-sharing") : "No draft shared yet"}`, "meta"));
+    if (stage === "planning") {
+      const preview = shared.plan_preview;
+      if (preview) {
+        root.append(node("h4", "Registered plan for review"), node("p", `${preview.current ? "Current" : "Stale — republish from the owning CLI"} · SHA-256 ${preview.plan_hash}`, "meta"));
+        root.append(node("h4", "Approved behavior"), node("p", preview.specification.behavior, "prose"),
+          node("p", "Exclusions: " + preview.specification.exclusions, "prose"));
+        root.append(node("h4", "Implementation plan"), node("p", preview.plan.plat_map || "No master narrative supplied.", "prose"));
+        root.append(table(["Lot", "Repository", "Depends on", "Scope"], preview.plan.lots.map(l => [l.key, l.repo, (l.depends_on || []).join(", ") || "None", l.plan || "Not supplied"])));
+        root.append(table(["Criterion", "Requirement", "Verification"], (preview.plan.criteria || []).map(c => [c.id, c.statement, c.verify || "Reviewer evidence"])));
+        const commands = node("details"); commands.append(node("summary", "Gate commands, phases, and budget"), node("pre", JSON.stringify({execution: preview.execution, budget_usd: preview.budget_usd, gates: preview.plan.lots.map(l => ({lot:l.key, gate:l.gate}))}, null, 2), "prose")); root.append(commands);
+      } else root.append(node("p", "Prepare and register the plan on the owning laptop, then publish it with plat workflow share planning. Room does not execute browser-authored shell commands."));
+    }
+    const form = node("form", undefined, "composer");
+    const read = {};
+    function textField(key, label, lines=false) {
+      const input = node("textarea"); input.rows = 3;
+      input.value = lines ? (values[key] || []).join("\n") : values[key] || "";
+      const f = field(label, input); f.className = "wide"; form.append(f);
+      read[key] = () => lines ? input.value.split("\n").map(x => x.trim()).filter(Boolean) : input.value;
+      return input;
+    }
+    function rowsField(key, fields, defaults) {
+      const area = node("div", undefined, "wide"); const readers = [];
+      const addRow = (value) => {
+        const box = node("div", undefined, "composer item"); const inputs = {};
+        for (const [name, label] of fields) {
+          const input = name === "status" ? select([["collected", "Collected"], ["unavailable", "Unavailable"]], value[name] || "collected") : node("textarea");
+          if (name !== "status") { input.rows = 2; input.value = value[name] || ""; }
+          inputs[name] = input; box.append(field(label, input));
+        }
+        const entry = {box, inputs}; readers.push(entry);
+        box.append(button("Remove row", () => {readers.splice(readers.indexOf(entry),1); box.remove(); form.dispatchEvent(new Event("input"));}, "secondary"));
+        area.append(box);
+      };
+      (values[key]?.length ? values[key] : defaults).forEach(addRow);
+      area.append(button(key === "sources" ? "Add source" : "Add outcome", () => {addRow({}); form.dispatchEvent(new Event("input"));}, "secondary"));
+      form.append(area);
+      read[key] = () => readers.map(r => Object.fromEntries(Object.entries(r.inputs).map(([k,i]) => [k,i.value])));
+    }
+    if (stage === "context") {
+      textField("summary", "Context summary");
+      rowsField("sources", [["reference","Source reference"],["status","Availability"],["snapshot","Collected context"],["reason","Reason unavailable"]], [{reference:p.anchor,status:"collected"}]);
+      textField("blockers", "Blocking questions — one per line; resolve before approval", true);
+    } else if (stage === "definition") {
+      textField("problem", "Problem"); textField("outcome", "Intended outcome"); textField("scope", "Scope and boundaries");
+      textField("success_measures", "Success measures — one per line", true);
+      textField("open_questions", "Open questions — resolve before approval", true);
+    } else if (stage === "specification") {
+      textField("behavior", "Required behavior and contracts");
+      rowsField("outcomes", [["id","Outcome ID"],["statement","Ticket outcome"]], [{id:"O1"}]);
+      textField("exclusions", "Explicit exclusions"); textField("open_questions", "Open questions — resolve before approval", true);
+      textField("note", "Approval rationale");
+    } else {
+      textField("note", "Plan review and approval rationale");
+      const choices = Object.create(null);
+      for (const outcome of shared.plan_preview?.specification?.outcomes || []) {
+        const group = node("fieldset", undefined, "wide"); group.append(node("legend", outcome.id + " · " + outcome.statement));
+        choices[outcome.id] = [];
+        for (const criterion of shared.plan_preview.plan.criteria || []) {
+          const input = node("input"); input.type = "checkbox"; input.checked = (values.alignment?.[outcome.id] || []).includes(criterion.id);
+          const label = field(criterion.id + " · " + criterion.statement, input); label.className = "check"; group.append(label);
+          choices[outcome.id].push([criterion.id,input]);
+        }
+        form.append(group);
+      }
+      read.alignment = () => Object.fromEntries(Object.entries(choices).map(([id,entries]) => [id,entries.filter(([,input]) => input.checked).map(([key]) => key)]));
+    }
+    const canEdit = member.role !== "viewer";
+    const controls = node("div", undefined, "button-group wide");
+    const save = node("button", "Share draft"); save.type = "submit";
+    const approve = button("Accept shared " + stage, async () => {
+      approve.disabled = true;
+      const ok = await send("workspace", {action:"workflow_accept",plat:p.id,stage,version:shared.version,draft_version:draft.draft_version,sha256:draft.sha256});
+      if (!ok) approve.disabled = !connected;
+    });
+    save.disabled = !canEdit || !connected || (stage === "planning" && !shared.plan_preview?.current);
+    approve.disabled = !canEdit || !connected || !draft?.current;
+    form.addEventListener("input", () => { form.dataset.dirty = "true"; approve.disabled = true; });
+    form.addEventListener("commandconfirmed", e => {
+      if (e.detail.path === "workspace" && ["workflow_share","workflow_accept","workflow_revise"].includes(e.detail.body.action)) delete form.dataset.dirty;
+    });
+    form.onsubmit = async e => {
+      e.preventDefault(); save.disabled = true;
+      const fields = {...values, ...Object.fromEntries(Object.entries(read).map(([k,f]) => [k,f()]))};
+      await send("workspace", {action:"workflow_share",plat:p.id,stage,version:shared.version,draft_version:draft?.draft_version || 0,fields});
+      save.disabled = !connected || !canEdit || (stage === "planning" && !shared.plan_preview?.current);
+    };
+    controls.append(button("Expand fields", () => form.querySelectorAll("textarea").forEach(i => i.classList.toggle("expanded")), "secondary"), save, approve); form.append(controls);
+    form.append(node("p", "Sharing saves a team-visible draft. Acceptance advances the workflow using that saved content. Edit and share again whenever clarification is needed.", "meta wide"));
+    if (!canEdit) for (const input of form.querySelectorAll("input,textarea,select,button")) input.disabled = true;
+    root.append(form);
+  }
+  if (member.role !== "viewer" && p.status === "planned" && [...stages,"development"].includes(stage)) {
+    const revise = node("form", undefined, "composer");
+    const target = select(stages.slice(0, Math.min(stages.indexOf(stage) < 0 ? 4 : stages.indexOf(stage)+1,4)).map(s => [s,s]), stages.includes(stage) ? stage : "planning");
+    const reason = node("textarea"); reason.required = true; reason.rows = 3;
+    revise.append(field("Stage to revisit",target)); const label = field("Requested changes and reason",reason); label.className = "wide"; revise.append(label);
+    const submit = node("button","Request changes"); submit.type = "submit"; submit.disabled = !connected; revise.append(submit);
+    revise.addEventListener("input", () => {revise.dataset.dirty = "true";});
+    revise.addEventListener("commandconfirmed", e => {if(e.detail.body.action === "workflow_revise") delete revise.dataset.dirty;});
+    revise.onsubmit = async e => {e.preventDefault(); submit.disabled = true; await send("workspace",{action:"workflow_revise",plat:p.id,stage:target.value,version:shared.version,note:reason.value}); submit.disabled = !connected;};
+    root.append(node("h4","Request a revision"),revise);
+  }
+  return root;
 }

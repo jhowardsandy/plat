@@ -129,7 +129,7 @@ def _required(data, *keys):
             raise WorkflowError(f'{key} is required')
 
 
-def accept(db, plat, stage, data, expected):
+def accept(db, plat, stage, data, expected, *, who=None):
     w = locked(db, plat, expected)
     if stage != w.stage:
         raise WorkflowError(f'expected {w.stage}, received {stage}')
@@ -188,7 +188,7 @@ def accept(db, plat, stage, data, expected):
         next_stage = 'ready'
     else:
         raise WorkflowError('this stage requires an independently executed command')
-    return save(db, plat, w, stage, data, next_stage)
+    return save(db, plat, w, stage, data, next_stage, who=who, human=True)
 
 
 def require_accepted(db, plat):

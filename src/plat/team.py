@@ -144,10 +144,12 @@ def board(db):
                 current_revisions = revisions(db, p)
             except (OSError, ValueError, subprocess.CalledProcessError):
                 pass
+        from .guidance import STEPS, guided
         from .lifecycle import readiness
+        planning_step = STEPS.get(w.stage) if guided(w) and w.stage in ("context", "definition", "specification", "planning") else None
         ready = readiness(db, p) if w else None
         attempts = db.scalars(select(Attempt).join(Lot).where(Lot.plat_id == p.id)).all()
-        out.append({'readiness': ready, 'id': p.public_id, 'anchor': p.anchor, 'title': p.title, 'status': p.status,
+        out.append({'planning_next_step': planning_step, 'readiness': ready, 'id': p.public_id, 'anchor': p.anchor, 'title': p.title, 'status': p.status,
                     'budget': p.budget_usd, 'spent': sum(a.cost_usd for a in attempts),
                     'estimated': any(a.cost_estimated for a in attempts),
                     'stage': w.stage if w else 'local development', 'version': w.version if w else 0,

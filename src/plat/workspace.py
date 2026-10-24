@@ -47,7 +47,26 @@ def command(db, member, request):
             raise Conflict('idempotency key was already used for another command')
         return prior.result
     action = request.get('action')
-    if action == 'record_guidance':
+    if action in ('workflow_share', 'workflow_accept', 'workflow_revise'):
+        from . import guidance, planning
+        if not member.active or member.role not in ('engineer', 'admin'):
+            raise Forbidden('an active engineer or administrator is required')
+        if type(request.get('version')) is not int or not isinstance(request.get('stage'), str):
+            raise ValueError('stage and current workflow version are required')
+        p = db.scalars(select(Plat).where(Plat.public_id == request.get('plat'))).first()
+        if not p:
+            raise ValueError('plat not found')
+        if action == 'workflow_share':
+            result = planning.share(db, p, request['stage'], request.get('fields'), request['version'],
+                                    request.get('draft_version'), who=member.name)
+        elif action == 'workflow_accept':
+            row = planning.accept(db, p, request['stage'], request['version'],
+                                  request.get('draft_version'), request.get('sha256'), who=member.name)
+            result = {'version': row.version, 'sha256': row.sha256}
+        else:
+            row = guidance.revise(db, p, request['stage'], request.get('note'), request['version'], who=member.name, share=True)
+            result = {'version': row.version}
+    elif action == 'record_guidance':
         from . import guidance
         if not member.active or member.role not in ('engineer', 'admin'):
             raise Forbidden('an active engineer or administrator is required')
@@ -154,9 +173,11 @@ def room(db, public_id):
     from .delivery_actions import project as action_project
     from .executor import room as execution_room
     from .guidance import project as guidance_project
+    from .planning import project as planning_project
     from .publication import project as publication_project
     return {
         'guidance': guidance_project(db, p),
+        'planning': planning_project(db, p),
         'execution': execution_room(db, p),
         'delivery': delivery_project(db, p),
         'delivery_actions': {**action_project(db, p), 'publication': publication_project(db, p)},

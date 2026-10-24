@@ -117,6 +117,51 @@ Classic workflows continue to accept `specification` with `note: <rationale>` af
 `plat plan --commit`, then advance directly to development. Skills must inspect the
 recorded process and never reinterpret an existing classic run as guided work.
 
+## Shared planning in Room and the CLI
+
+Room's **Planning** tab supports context sources, questions, definition, behavior
+specification, and plan acceptance. Start the guided run with `workflow begin` on
+the owning laptop. Saving **Share draft** publishes editable text to the team;
+it does not accept it or execute commands. **Accept shared** approves the exact
+saved revision through the same lifecycle validators as CLI acceptance.
+Outstanding blocking questions prevent acceptance, but do not prevent saving a
+draft for discussion. Use **Request changes** with a reason to return unstarted
+work to the appropriate stage. Both interfaces retain the revision history. Room shows the requested revision reason; CLI users can opt into the same sharing with `workflow revise --share`. Earlier private CLI notes stay private.
+
+CLI users can participate in the same shared drafts:
+
+```sh
+plat workflow share DEV-123 specification --file specification.yaml --version 2 --draft-version 0
+plat workflow status DEV-123
+plat workflow accept-shared DEV-123 specification --version 2 --draft-version SHARED_DRAFT_ID --sha256 SHARED_HASH
+```
+
+Use the actual draft ID/hash returned by share or status. Updates require the
+previous draft ID. Ordinary `workflow accept --file` remains supported; its
+workflow change makes earlier shared drafts stale. Private CLI context is never
+automatically published by opening Room. Only explicitly shared drafts are visible.
+
+Materialize and smoke the executable plan on the owning laptop, then explicitly
+publish it for review:
+
+```sh
+plat plan plat.yaml --commit
+plat workflow share DEV-123 planning --file plan-acceptance.yaml --version CURRENT_VERSION --draft-version 0
+```
+
+This shares the registered plan, including scopes, repositories, dependencies,
+criteria, phases, budget, and gate commands, together with its approved behavior
+specification. Review those files for credentials before publishing. Room displays
+that immutable preview and lets engineers edit the approval rationale and map
+outcomes to criteria. It cannot alter registered commands or create worktrees.
+If the plan or specification changes, republish from the CLI before Room approval.
+Shared-draft versions, workflow versions, and plan hashes are all checked, so a
+stale browser cannot accept a newer document it has not reviewed. Viewers can read
+shared planning but cannot edit, approve, or request changes.
+
+After planning acceptance, use **Execution → Start** or `plat start`. Saving or
+accepting planning never launches an agent by itself.
+
 ## Engineer handoff checklist
 
 Room and `workflow status` show six advisory checks: testing, engineer review,
