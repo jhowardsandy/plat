@@ -799,3 +799,57 @@ commands use the stated target and immutable artifact, smoke verifies the deploy
 version, and rollback restores the stated prior artifact. Keep secrets in the
 owner's local credential setup, not in the shared recipe. Coordinate shared
 environment changes across runs; execution ownership is scoped to the lot.
+
+### Start with a reviewed story baseline
+
+In Room, expand **Start a story**, enter the Jira requirements and outcomes plus
+source revision, scope, responsible engineer and context references, then choose
+**Preview story**. **Create guided workflow** records that exact preview and opens
+Planning at context review. Peer controls have equal widths; narrative fields can
+be expanded. The responsible engineer must be an active engineer or administrator.
+The new run belongs to the Room server's configured installation; register its plan
+from that installation's CLI.
+
+The CLI uses the same intake validation and baseline:
+
+```yaml
+# story.yaml — an explicitly shared snapshot, not an executable plan
+key: DEV-1234
+title: Show the document processing result
+captain: engineer
+source_ref: https://jira.example/browse/DEV-1234
+source_revision: "Updated 2026-11-03 10:00 UTC"
+requirements: Customers need to inspect processing results.
+scope: Existing customers; no new upload capability.
+outcomes:
+  - A completed document shows its processing result.
+  - A failed document explains what the customer can do next.
+context_refs:
+  - layline:document-processing-architecture
+estimate: 3 points
+```
+
+```bash
+plat workflow intake --file story.yaml
+# Review the returned story and copy its sha256 into the explicit commit:
+plat workflow intake --file story.yaml --accept-hash <reviewed-sha256>
+plat workflow status DEV-1234
+```
+
+This records an **engineer-supplied** snapshot; it does not fetch Jira, certify
+source freshness, transition the ticket, or publish to Layline. Include an explicit
+explanation if the source revision is unknown. The original baseline remains
+visible in Room, attributed and hashed. Existing tickets are never overwritten.
+Room retries reuse an idempotency receipt; a fresh duplicate intake is rejected.
+CLI users opening the same local installation see the same workflow and evidence.
+
+Context, definition and specification editors offer starting text from the baseline.
+These are suggestions, not approvals. Linked context starts uncollected: supply its
+snapshot or explain why it is unavailable. Share and accept each stage through the
+existing CLI/Room approval cycle. Intake creates no lots or worktrees and launches
+no agent. The approved executable plan still comes from the owning CLI, with the
+existing independent gate smoke and outcome-to-criterion mapping.
+
+Automatic Jira/Layline import and change detection, a requirement-change ledger,
+and evolving engineering tasks remain subsequent work. The story baseline must not
+be treated as an automatically synchronized copy of either source.

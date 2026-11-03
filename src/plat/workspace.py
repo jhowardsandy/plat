@@ -47,7 +47,27 @@ def command(db, member, request):
             raise Conflict('idempotency key was already used for another command')
         return prior.result
     action = request.get('action')
-    if action in ('workflow_share', 'workflow_accept', 'workflow_revise'):
+    if action in ('story_preview', 'story_start'):
+        from . import intake
+        from .config import load
+        if not member.active or member.role not in ('engineer', 'admin'):
+            raise Forbidden('an active engineer or administrator is required')
+        if action == 'story_preview':
+            result = intake.preview(request.get('story'))
+        else:
+            preview_key = request.get('preview_key')
+            if not isinstance(preview_key, str):
+                raise ValueError('review a story preview first')
+            receipt = db.get(CommandReceipt, preview_key)
+            if not receipt or receipt.actor != member.name or receipt.result.get('provenance') != 'engineer_supplied':
+                raise ValueError('review your own story preview first')
+            story = receipt.result['story']
+            captain = db.scalars(select(TeamMember).where(TeamMember.name == story['captain'], TeamMember.active.is_(True),
+                TeamMember.role.in_(('engineer', 'admin')))).first()
+            if not captain:
+                raise ValueError('captain must be an active engineer or administrator')
+            result = intake.start(db, load(), story, request.get('sha256'), who=member.name)
+    elif action in ('workflow_share', 'workflow_accept', 'workflow_revise'):
         from . import guidance, planning
         if not member.active or member.role not in ('engineer', 'admin'):
             raise Forbidden('an active engineer or administrator is required')

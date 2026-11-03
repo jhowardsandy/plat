@@ -7,7 +7,7 @@ import yaml
 from sqlalchemy import select
 
 from . import db as DB
-from . import guidance, planning
+from . import guidance, intake, planning
 from . import lifecycle as L
 from .config import load
 from .models import Lot, TrackedSession, Workflow
@@ -48,6 +48,18 @@ def begin(anchor: str, owner: str = typer.Option(...), title: str = "",
             db.add(p); db.flush()
         w = L.begin(db, p, owner, guided=guided)
         output({'stage': w.stage, 'version': w.version})
+
+
+@app.command('intake')
+def story_intake(file: Path = typer.Option(..., exists=True),
+                 accept_hash: str = typer.Option('', help='Create only the exact previewed story hash')):
+    """Preview an engineer-supplied story; explicitly commit its reviewed snapshot."""
+    data = input_file(file)
+    if not accept_hash:
+        output(intake.preview(data))
+        return
+    with DB.session() as db:
+        output(intake.start(db, load(), data, accept_hash))
 
 
 @app.command('accept')
