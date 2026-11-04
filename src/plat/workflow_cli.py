@@ -7,7 +7,7 @@ import yaml
 from sqlalchemy import select
 
 from . import db as DB
-from . import guidance, intake, planning
+from . import guidance, intake, planning, story_sources
 from . import lifecycle as L
 from .config import load
 from .models import Lot, TrackedSession, Workflow
@@ -229,3 +229,36 @@ def accept_shared(anchor: str, stage: str, version: int = typer.Option(...),
     with DB.session() as db:
         row = planning.accept(db, resolve(db, anchor), stage, version, draft_version, sha256)
         output({'version': row.version, 'sha256': row.sha256})
+
+
+@app.command('import-story')
+def import_story(anchor: str, captain: str = typer.Option(...), accept_hash: str = ''):
+    """Fetch a configured source preview; re-fetch and compare before creating."""
+    cfg = load()
+    try:
+        source = story_sources.fetch(cfg, anchor, captain)
+    except L.WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    if not accept_hash:
+        output(source)
+        return
+    with DB.session() as db:
+        output(intake.start(db, cfg, source['story'], accept_hash, source=source))
+
+
+@app.command('refresh-story')
+def refresh_story(anchor: str, version: int = typer.Option(...)):
+    """Observe source drift against the original baseline without changing scope."""
+    try:
+        with DB.session() as db:
+            output(story_sources.observe(db, load(), resolve(db, anchor), version))
+    except L.WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from None
+
+
+@app.command('record-change')
+def record_requirement_change(anchor: str, file: Path = typer.Option(..., exists=True),
+                              version: int = typer.Option(...), ledger_version: int = typer.Option(...)):
+    """Record a proposal or an existing decision; never apply changed executable scope."""
+    with DB.session() as db:
+        output(story_sources.record_change(db, resolve(db, anchor), input_file(file), version, ledger_version))

@@ -862,7 +862,7 @@ async function refresh(force = false) {
     el("connection").textContent = "Updated " + when(b.observed_at);
     el("error").textContent = "";
     if (roomId) {
-      const editing = dirtyRoom();
+      const editing = dirtyRoom() || Boolean(el("room").querySelector("details[data-preserve][open] form"));
       if (force || !editing) {
         roomData = await api("room?id=" + encodeURIComponent(roomId));
         if (g !== generation) return;
@@ -1369,6 +1369,7 @@ function planningPanel(p, shared) {
     node("p", `${shared.revision.actor} requested ${shared.revision.to} changes at v${shared.revision.version}: ${shared.revision.note}`, "prose"));
   root.append(node("p", "Next: " + shared.next_step, "notice"));
   if (shared.story_baseline) root.append(storySummary(shared.story_baseline));
+  if (shared.story_baseline) root.append(sourceReviewPanel(p, shared));
   const stage = shared.stage;
   const stages = ["context", "definition", "specification", "planning"];
   const journey = node("ol", undefined, "workflow-steps");
@@ -1513,8 +1514,8 @@ function storySummary(baseline) {
     ["Outcomes", s.outcomes.join("\n")], ["Context references", s.context_refs.join("\n") || "None supplied"],
     ["Estimate", s.estimate || "Not supplied"],
   ]) details.append(node("h4", label), node("p", value, "prose"));
-  details.append(node("p", "Engineer-supplied snapshot · " + (baseline.recorded_by ? "recorded by " + baseline.recorded_by + " · " : "") +
-    "SHA-256 " + baseline.sha256 + ". Source freshness has not been independently checked.", "meta"));
+  details.append(node("p", (baseline.provenance === "configured_source" ? "Configured source observed " + baseline.observed_at + " · " : "Engineer-supplied snapshot · ") + (baseline.recorded_by ? "recorded by " + baseline.recorded_by + " · " : "") +
+    "SHA-256 " + baseline.sha256 + (baseline.provenance === "configured_source" ? ". Snapshot from the adapter; later source changes require refresh." : ". Source freshness has not been independently checked."), "meta"));
   return details;
 }
 
@@ -1537,6 +1538,13 @@ function intakeForm() {
     inputs[key] = input;
     const labelNode = field(label, input); labelNode.className = "wide"; form.append(labelNode);
   }
+  let editRevision = crypto.randomUUID();
+  const fetchSource = button("Import from source", async () => {
+    fetchSource.disabled = true;
+    await send("workspace", {action:"story_fetch", anchor:inputs.key.value.trim(), captain:inputs.captain.value, editor_revision:editRevision});
+    fetchSource.disabled = !connected;
+  }, "secondary");
+  form.append(fetchSource, node("p", "Import needs only a ticket key and responsible engineer. The server must have a read-only source adapter configured. Imported content is previewed before creation; editing it switches to an engineer-supplied snapshot.", "meta wide"));
   const shown = node("div", undefined, "wide");
   const preview = node("button", "Preview story"); preview.type = "submit";
   let reviewed = null;
@@ -1551,11 +1559,21 @@ function intakeForm() {
   controls.append(button("Expand fields", () => form.querySelectorAll("textarea").forEach(i => i.classList.toggle("expanded")), "secondary"), preview, start);
   form.append(controls, shown);
   form.addEventListener("input", () => {
+    editRevision = crypto.randomUUID();
     form.dataset.dirty = "true"; reviewed = null; start.disabled = true; shown.replaceChildren();
   });
   form.addEventListener("commandconfirmed", e => {
     if (e.detail.path !== "workspace") return;
-    if (e.detail.body.action === "story_preview") {
+    if (e.detail.body.action === "story_fetch") {
+      if (e.detail.body.editor_revision !== editRevision) {
+        shown.replaceChildren(node("p", "The editor changed during import. Import again to replace those edits."));
+        return;
+      }
+      reviewed = {...e.detail.result, key:e.detail.body.key};
+      for (const [key,input] of Object.entries(inputs)) input.value = Array.isArray(reviewed.story[key]) ? reviewed.story[key].join("\n") : reviewed.story[key];
+      form.dataset.dirty = "true";
+      shown.replaceChildren(storySummary(reviewed)); start.disabled = false;
+    } else if (e.detail.body.action === "story_preview") {
       if (JSON.stringify(e.detail.body.story) !== JSON.stringify(readStory())) {
         reviewed = null; start.disabled = true;
         shown.replaceChildren(node("p", "The story changed while the preview was pending. Preview the updated story."));
@@ -1576,4 +1594,57 @@ function intakeForm() {
     preview.disabled = !connected;
   };
   details.append(form); return details;
+}
+
+function sourceReviewPanel(p, shared) {
+  const root = node("section");
+  const review = shared.source_review;
+  root.append(node("h4", "Source changes and requirement decisions"));
+  root.append(node("p", "Observations and decisions below do not replace the original story, approve a proposal, or change executable scope. Use Request changes to revise unstarted work; started scope requires a new plat. A new customer capability needs its own story and estimate.", "meta"));
+  const observation = review?.observation;
+  if (observation) {
+    root.append(node("p", "Last source observation: " + observation.observed_at + " · " + observation.recorded_by));
+    const differences = Object.entries(observation.changes);
+    root.append(differences.length ? table(["Field", "Original baseline", "Observed source"], differences.map(([key,value]) =>
+      [key, Array.isArray(value.before) ? value.before.join("\n") : value.before, Array.isArray(value.after) ? value.after.join("\n") : value.after])) : node("p", "No changes from the recorded story at that observation."));
+  } else root.append(node("p", "Source has not been refreshed."));
+  if (member.role !== "viewer" && p.status !== "closed") {
+    root.append(button("Refresh source", async () => {
+      await send("workspace", {action:"story_refresh", plat:p.id, version:shared.version});
+    }, "secondary"));
+  }
+  for (const change of review?.changes || []) {
+    const detail = node("details");
+    detail.append(node("summary", `${change.disposition.replaceAll("_"," ")} · ${change.recorded_by} · ${change.recorded_at}`));
+    for (const key of ["before","after","reason","source","participants","impact","layline_followup"])
+      if (change[key]) detail.append(node("h4",key.replaceAll("_"," ")),node("p",change[key],"prose"));
+    detail.append(node("p", "Recorded only · workflow v" + change.workflow_version + ". Review affected artifacts separately.", "meta"));
+    root.append(detail);
+  }
+  if (member.role === "viewer" || p.status === "closed") return root;
+  const detail = node("details"); detail.dataset.preserve = "true"; detail.append(node("summary","Record a requirement change"));
+  const form = node("form",undefined,"composer");
+  const disposition = select([["proposed","Proposal — not decided"],["decided","Decision already made"],["engineering_detail","Engineering detail within existing outcomes"]],"proposed");
+  form.append(field("Decision status",disposition));
+  const inputs = {};
+  for (const [key,label] of [["before","Previous requirement"],["after","Changed or proposed requirement"],
+    ["reason","Why"],["source","Decision source — link or conversation note"],["participants","People involved (if applicable)"],
+    ["impact","Affected specification, plan, tests, documentation and delivery evidence"],["layline_followup","Optional Layline follow-up"]]) {
+    const input=node("textarea"); input.rows=3; input.required=!["participants","layline_followup"].includes(key);
+    inputs[key]=input; const f=field(label,input); f.className="wide"; form.append(f);
+  }
+  const save=node("button","Record change"); save.type="submit";
+  const controls=node("div",undefined,"button-group wide");
+  controls.append(button("Expand fields",()=>form.querySelectorAll("textarea").forEach(i=>i.classList.toggle("expanded")),"secondary"),save); form.append(controls);
+  form.addEventListener("input",()=>{form.dataset.dirty="true";});
+  form.addEventListener("commandconfirmed",e=>{
+    if(e.detail.body.action==="requirement_change") { delete form.dataset.dirty; detail.open=false; }
+  });
+  form.onsubmit=async e=>{
+    e.preventDefault(); save.disabled=true;
+    await send("workspace",{action:"requirement_change",plat:p.id,version:shared.version,ledger_version:review.ledger_version,
+      fields:{disposition:disposition.value,...Object.fromEntries(Object.entries(inputs).map(([k,i])=>[k,i.value]))}});
+    save.disabled=!connected;
+  };
+  detail.append(form); root.append(detail); return root;
 }

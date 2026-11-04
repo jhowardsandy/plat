@@ -44,10 +44,14 @@ def preview(data):
     return {'story': story, 'sha256': L.digest(story), 'provenance': 'engineer_supplied'}
 
 
-def start(db, cfg, data, expected_hash, *, who=None):
+def start(db, cfg, data, expected_hash, *, who=None, source=None):
     reviewed = preview(data)
     if expected_hash != reviewed['sha256']:
         raise L.WorkflowError('story changed; preview and review the current snapshot')
+    if source is not None:
+        if source['sha256'] != reviewed['sha256'] or source['story'] != reviewed['story']:
+            raise L.WorkflowError('source snapshot does not match the reviewed story')
+        reviewed = source
     story = reviewed['story']
     who = who or actor()
     db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),

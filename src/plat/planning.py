@@ -4,7 +4,7 @@ import json
 import yaml
 from sqlalchemy import select
 
-from . import guidance, intake
+from . import guidance, intake, story_sources
 from . import lifecycle as L
 from .decisions import record
 from .models import Artifact, Lot, Workflow
@@ -138,7 +138,7 @@ def project(db, p):
     shared_revision = ({**revision.content, 'actor': revision.actor, 'version': revision.version}
                        if revision and revision.content.get('shared') else None)
     baseline = intake.project(db, p)
-    return {'story_baseline': baseline, 'suggestions': intake.suggestions(baseline),
+    return {'source_review': story_sources.project(db, p), 'story_baseline': baseline, 'suggestions': intake.suggestions(baseline),
             'next_step': guidance.STEPS.get(w.stage, '') if w else '',
             'revision': shared_revision, 'enabled': guidance.guided(w), 'stage': w.stage if w else None,
             'version': w.version if w else None, 'drafts': drafts, 'plan_preview': shown}

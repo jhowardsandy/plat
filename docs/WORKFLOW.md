@@ -850,6 +850,91 @@ existing CLI/Room approval cycle. Intake creates no lots or worktrees and launch
 no agent. The approved executable plan still comes from the owning CLI, with the
 existing independent gate smoke and outcome-to-criterion mapping.
 
-Automatic Jira/Layline import and change detection, a requirement-change ledger,
-and evolving engineering tasks remain subsequent work. The story baseline must not
-be treated as an automatically synchronized copy of either source.
+The baseline remains an immutable snapshot, not an automatically synchronized copy
+of either source. Source observations and requirement decisions are described below.
+Evolving engineering tasks remain subsequent work.
+
+
+### Import and observe source changes
+
+An administrator may configure a **read-only** Jira/Layline adapter in
+`~/.plat/config.toml` on the CLI or Room server installation:
+
+```toml
+[tracker]
+story_argv = ["/absolute/path/to/story-adapter", "{anchor}"]
+```
+
+The adapter receives the ticket key as an argument and prints one JSON object with
+exactly the intake fields above (captain may be omitted: the operator selects it).
+It must return the requested `key`, source reference and source revision, explicit
+requirements, scope and outcomes; it must not invent missing business criteria.
+Use the existing authenticated read-only Jira/Layline integration to construct this
+object. Atlassian custom-field mapping and Layline export formats are adapter-owned;
+Plat does not ship a tenant-specific adapter or automatically configure credentials.
+No writes, Jira transitions, or messages are part of this contract. The administrator
+must trust the adapter: disabling the shell does not prevent a configured executable
+from making side effects of its own.
+
+The executable is fixed by server configuration, never supplied by the browser.
+Arguments are passed without a shell, the key is validated, reads time out after
+30 seconds, and malformed, oversized, failed or mismatched responses are rejected.
+Connector stderr is not exposed. Existing `tracker.cmd` status synchronization is
+unchanged and is not a rich-story adapter.
+
+In Room, enter the key and responsible engineer, then **Import from source**.
+Review the returned snapshot and choose **Create guided workflow**. Editing imported
+text switches to the manual preview path and labels it engineer-supplied. Room
+creation commits the exact server-observed preview; the observation timestamp stays
+visible even if the source subsequently changes.
+
+```bash
+plat workflow import-story DEV-1234 --captain engineer
+# Review the returned snapshot. CLI commit re-fetches and rejects a changed hash:
+plat workflow import-story DEV-1234 --captain engineer --accept-hash <sha256>
+plat workflow refresh-story DEV-1234 --version 0
+plat workflow status DEV-1234
+```
+
+Room **Refresh source** and CLI `refresh-story` append a dated observation and a
+field-by-field comparison with the original baseline. They never replace the
+baseline, approvals or executable plan. A failed refresh reports unavailable rather
+than declaring the story unchanged; the previous successful observation remains
+explicitly dated. Source refresh is explicit, not a background synchronization job.
+
+### Record requirement changes from any coordination channel
+
+Room Planning → **Record a requirement change** and CLI `record-change` share an
+append-only ledger. Select `proposed`, `decided`, or `engineering_detail`. `decided`
+records a decision already made (including Slack or a conversation); it does not
+require another business approval or a Layline update. `proposed` remains undecided.
+
+```yaml
+before: Display only the latest processing result.
+after: Display the latest result plus the processing timestamp.
+reason: The customer needs to know which processing attempt produced the result.
+source: Slack discussion on 2026-11-03; link or conversation note
+participants: Engineer and product owner
+disposition: decided
+impact: Revisit the behavior specification and add timestamp regression coverage.
+layline_followup: Optional architecture-note update after specification review.
+```
+
+```bash
+# Read workflow version and planning.source_review.ledger_version first:
+plat workflow status DEV-1234
+plat workflow record-change DEV-1234 --file change.yaml --version 0 --ledger-version 0
+```
+
+Each entry records its author, time, original story hash and workflow revision.
+Concurrent ledger additions or stale workflow versions require refresh. Room retries
+return the existing receipt instead of duplicating a decision. Viewers cannot import,
+refresh or record changes. Shipped work remains immutable.
+
+**Recording is not application.** Entries explicitly say `record_only`; neither
+proposals nor decided changes silently update scope, invalidate/replace approvals,
+or claim that existing test evidence proves changed requirements. Inspect the stated
+impact and use the existing revision/approval cycle for unstarted work. Started
+executable scope remains immutable: create a new plat for changed scope. A materially
+new customer capability should have a new story and estimate. This is guidance with
+visible evidence, not an automatic policy gate or source publication mechanism.

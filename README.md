@@ -130,7 +130,7 @@ tokens, so theirs is estimated from published rates and shown with a `~`.
 
 New guided workflows separate behavior specification approval from executable plan approval, with revision cycles and an advisory engineer handoff checklist in Room and the CLI. CLI acceptance is sufficient; existing workflows remain compatible.
 
-Room’s **Start a story** and `plat workflow intake` capture a reviewed story baseline: source revision, business requirements, outcomes, scope and responsible engineer. Planning editors reuse that text as editable suggestions. Intake does not approve stages or launch execution; automatic Jira/Layline import remains future work.
+Room’s **Start a story** and `plat workflow intake` capture a reviewed story baseline: source revision, business requirements, outcomes, scope and responsible engineer. Planning editors reuse that text as editable suggestions. Intake does not approve stages or launch execution; a configured read-only source adapter can import stories and show revision drift. Requirement decisions can be recorded with their source and impact without rewriting accepted scope.
 
 The local development loop now extends through accepted context and specification,
 independent integration checks, a recorded delivery package, explicit test deployment,
