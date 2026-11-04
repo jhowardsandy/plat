@@ -938,3 +938,28 @@ impact and use the existing revision/approval cycle for unstarted work. Started
 executable scope remains immutable: create a new plat for changed scope. A materially
 new customer capability should have a new story and estimate. This is guidance with
 visible evidence, not an automatic policy gate or source publication mechanism.
+
+### Layline exported stories
+
+Layline's Jira connection can preview and export a story without sharing its
+credentials. In Layline Settings → Connections, retrieve the ticket, select it,
+fill **Hand off to Plat**, review and export. Local adoption is independent.
+The export preserves Jira's description and source revision; outcomes/scope and
+context references are explicitly entered by the engineer.
+
+Configure the read-only adapter in `[tracker]` (replace all example values):
+
+```toml
+story_argv = ["/absolute/path/to/plat", "workflow", "layline-story", "{anchor}", "--directory", "/path/to/Layline/config", "--connection", "00000000-0000-4000-8000-000000000001", "--workspace", "mlg", "--cloud-id", "00000000-0000-4000-8000-000000000002"]
+```
+
+Use Room's **Import from source** or `plat workflow import-story DEV-1234
+--captain engineer`. Review before creating the guided workflow. This leaves the
+workflow at context review, with no acceptance, worktrees or agents.
+
+`layline-story` reads only the exact ticket export for the configured connection,
+verifies workspace/cloud identity, rejects malformed/oversized/linked files, and
+performs no network or credential access. It explicitly labels source_revision
+as a Layline exported snapshot. **Refresh source does not fetch Jira:** retrieve
+and export again in Layline first. Snapshot time is not proof of current Jira
+state; local exported files are trusted operator input, not signed attestations.

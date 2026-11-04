@@ -262,3 +262,15 @@ def record_requirement_change(anchor: str, file: Path = typer.Option(..., exists
     """Record a proposal or an existing decision; never apply changed executable scope."""
     with DB.session() as db:
         output(story_sources.record_change(db, resolve(db, anchor), input_file(file), version, ledger_version))
+
+
+@app.command('layline-story')
+def layline_story(anchor: str, directory: Path = typer.Option(...),
+                  connection: str = typer.Option(...), workspace: str = typer.Option(...),
+                  cloud_id: str = typer.Option(...)):
+    """Read a reviewed local Layline export for tracker.story_argv (no remote calls)."""
+    from .layline_source import read_story
+    try:
+        output(read_story(directory, connection, workspace, cloud_id, anchor))
+    except L.WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from None
