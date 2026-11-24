@@ -109,7 +109,7 @@ slug: <slug>
 budget_usd: 15
 tickets: []
 related: []
-phases: [code, review]        # only implemented phases; docs/quality are rejected
+phases: [code, review, docs, quality]  # select the phases agreed for this work
 plat_map: |
   <the problem, the architecture, the contracts, what is out of scope>
 lots:
@@ -150,6 +150,14 @@ Only after an explicit yes:
 ```bash
 plat plan $ROOT/.worktrees/<TICKET>.plat.yaml --commit
 ```
+
+Verify `plat workflow status <TICKET>` and `plat status <TICKET> --all` after
+registration. Compare the recorded lot keys and repositories with the approved spec.
+For full-lifecycle work, accept the specification as described below. Include the
+spec path, current workflow stage/version, registered lot keys and database destination
+(without credentials) in the handoff. An empty table is not a completed handoff.
+If a team service is configured, verify its live board contains the same run and lots;
+report any visibility failure rather than claiming the team board is ready.
 
 Tell the user it is ready and that `/plat-run <TICKET>` starts it. **Do not start it yourself** — starting is a separate, deliberate act.
 

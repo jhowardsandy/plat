@@ -15,13 +15,51 @@ Execute a plat that `/plat-up` has already planned, and report honestly on what 
 
 ## Steps
 
-### 1. Check the state before starting
+### 1. Verify registration before starting
+
+Postgres is the authoritative record. `plat top` and the team web board read it;
+neither registers a plan. Files in Obsidian and worktrees are not proof of registration.
 
 ```bash
+plat config
+plat doctor
+plat workflow status <TICKET>
 plat status <TICKET> --all
 ```
 
-If lots are already `DONE`, say so — `plat start` skips them, it does not redo them. If one is `BLOCKED`, go to **Answering a blocked lot** below instead of starting.
+Verify the intended workspace and database (never print credentials), then resolve
+the exact approved spec, normally `<workspace>/.worktrees/<TICKET>.plat.yaml`.
+Compare its anchor, lot keys, repositories, phases and dependencies with the recorded
+plan in `plat show <TICKET>` and the lot status. Do not treat an empty status table
+as success. Stop on failed health checks or an ambiguous/mismatched destination.
+
+If the plan is missing or has no lots:
+
+- Recover the approved spec and its context/definition evidence from the planning
+  handoff. Do not invent a plan, acceptance, owner, or gate result.
+- For full-lifecycle work, run `plat workflow begin` if absent, then record the
+  already-accepted context and definition using the current workflow version.
+- Run `plat plan <spec> --commit` only for the exact scope already authorized by
+  the user. This runs the gate smoke checks and registers the lots, criteria and
+  plan snapshot. If scope has not been approved, return to the planning handoff.
+- Accept the resulting specification with the existing approval rationale and
+  current version. Re-read workflow and lot status before executing.
+
+Do not recommit an existing matching plan, revise started work, or convert a legacy
+run to full lifecycle automatically. A mismatch needs reconciliation against the
+approved scope, not duplicate records. Existing user authorization is sufficient;
+do not ask again merely because registration was missed.
+
+For a configured team service, read `plat team board --token-file <private-token-file>
+--url <configured-service-url>` and verify the same run public ID and lot keys as
+the database record. `cached: true` is not a live verification. If the board cannot
+be verified, report the visibility problem before claiming team tracking is ready;
+do not create another run, member, or database to make it appear. Never guess a
+service URL, display a token, or seed demo records for real work.
+
+Report the anchor, registered lots, workflow stage and verified destination before
+starting. If lots are already `DONE`, say so — `plat start` skips them. If one is
+`BLOCKED`, go to **Answering a blocked lot** below instead of starting.
 
 ### 2. Run it
 
