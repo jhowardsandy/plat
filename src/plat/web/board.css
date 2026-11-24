@@ -308,3 +308,13 @@ a {
 .delivery-shared .meta {
   overflow-wrap: anywhere;
 }
+
+.workflow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  padding: 1rem 2rem;
+}
+.workflow-steps [aria-current="step"] { font-weight: 700; color: var(--brand); }
+#intake { margin-bottom: 1.5rem; }
+#intake .meta { overflow-wrap: anywhere; }

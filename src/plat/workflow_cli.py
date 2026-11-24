@@ -7,7 +7,7 @@ import yaml
 from sqlalchemy import select
 
 from . import db as DB
-from . import guidance, planning
+from . import guidance, intake, planning, story_sources
 from . import lifecycle as L
 from .config import load
 from .models import Lot, TrackedSession, Workflow
@@ -48,6 +48,18 @@ def begin(anchor: str, owner: str = typer.Option(...), title: str = "",
             db.add(p); db.flush()
         w = L.begin(db, p, owner, guided=guided)
         output({'stage': w.stage, 'version': w.version})
+
+
+@app.command('intake')
+def story_intake(file: Path = typer.Option(..., exists=True),
+                 accept_hash: str = typer.Option('', help='Create only the exact previewed story hash')):
+    """Preview an engineer-supplied story; explicitly commit its reviewed snapshot."""
+    data = input_file(file)
+    if not accept_hash:
+        output(intake.preview(data))
+        return
+    with DB.session() as db:
+        output(intake.start(db, load(), data, accept_hash))
 
 
 @app.command('accept')
@@ -217,3 +229,48 @@ def accept_shared(anchor: str, stage: str, version: int = typer.Option(...),
     with DB.session() as db:
         row = planning.accept(db, resolve(db, anchor), stage, version, draft_version, sha256)
         output({'version': row.version, 'sha256': row.sha256})
+
+
+@app.command('import-story')
+def import_story(anchor: str, captain: str = typer.Option(...), accept_hash: str = ''):
+    """Fetch a configured source preview; re-fetch and compare before creating."""
+    cfg = load()
+    try:
+        source = story_sources.fetch(cfg, anchor, captain)
+    except L.WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    if not accept_hash:
+        output(source)
+        return
+    with DB.session() as db:
+        output(intake.start(db, cfg, source['story'], accept_hash, source=source))
+
+
+@app.command('refresh-story')
+def refresh_story(anchor: str, version: int = typer.Option(...)):
+    """Observe source drift against the original baseline without changing scope."""
+    try:
+        with DB.session() as db:
+            output(story_sources.observe(db, load(), resolve(db, anchor), version))
+    except L.WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from None
+
+
+@app.command('record-change')
+def record_requirement_change(anchor: str, file: Path = typer.Option(..., exists=True),
+                              version: int = typer.Option(...), ledger_version: int = typer.Option(...)):
+    """Record a proposal or an existing decision; never apply changed executable scope."""
+    with DB.session() as db:
+        output(story_sources.record_change(db, resolve(db, anchor), input_file(file), version, ledger_version))
+
+
+@app.command('layline-story')
+def layline_story(anchor: str, directory: Path = typer.Option(...),
+                  connection: str = typer.Option(...), workspace: str = typer.Option(...),
+                  cloud_id: str = typer.Option(...)):
+    """Read a reviewed local Layline export for tracker.story_argv (no remote calls)."""
+    from .layline_source import read_story
+    try:
+        output(read_story(directory, connection, workspace, cloud_id, anchor))
+    except L.WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from None

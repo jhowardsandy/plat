@@ -9,6 +9,9 @@ let token = "",
   sessionKey = "",
   generation = 0,
   refreshing = false;
+function dirtyIntake() {
+  return Boolean(el("intake").querySelector("form[data-dirty]"));
+}
 function dirtyRoom() {
   return Boolean(el("room").querySelector("form[data-dirty]"));
 }
@@ -185,10 +188,10 @@ async function send(path, command) {
 async function retry() {
   if (!pending) return false;
   try {
-    await api(pending.path, pending.body);
-    for (const form of document.querySelectorAll("#room-content form"))
+    const result = await api(pending.path, pending.body);
+    for (const form of document.querySelectorAll("#room-content form, #intake form"))
       form.dispatchEvent(
-        new CustomEvent("commandconfirmed", { detail: pending }),
+        new CustomEvent("commandconfirmed", { detail: {...pending, result} }),
       );
     pending = null;
     storePending();
@@ -853,11 +856,13 @@ async function refresh(force = false) {
       .forEach((p) => el("product").append(new Option(p, p)));
     el("product").value = oldProduct;
     savedViews();
+    if (!el("intake").firstChild) el("intake").append(intakeForm());
+    el("intake").hidden = member.role === "viewer";
     render();
     el("connection").textContent = "Updated " + when(b.observed_at);
     el("error").textContent = "";
     if (roomId) {
-      const editing = dirtyRoom();
+      const editing = dirtyRoom() || Boolean(el("room").querySelector("details[data-preserve][open] form"));
       if (force || !editing) {
         roomData = await api("room?id=" + encodeURIComponent(roomId));
         if (g !== generation) return;
@@ -945,7 +950,7 @@ el("back").onclick = () => {
   urlState();
 };
 el("disconnect").onclick = () => {
-  if (dirtyRoom() && !confirm("Discard the unsent draft and disconnect?"))
+  if ((dirtyRoom() || dirtyIntake()) && !confirm("Discard the unsent draft and disconnect?"))
     return;
   generation++;
   refreshing = false;
@@ -959,6 +964,7 @@ el("disconnect").onclick = () => {
   pending = null;
   el("workspace").hidden = true;
   el("room-content").replaceChildren();
+  el("intake").replaceChildren();
   el("board").replaceChildren();
   el("events").replaceChildren();
   el("retry").hidden = true;
@@ -976,7 +982,7 @@ el("save-view").onsubmit = async (e) => {
   });
 };
 window.addEventListener("beforeunload", (e) => {
-  if (dirtyRoom()) {
+  if (dirtyRoom() || dirtyIntake()) {
     e.preventDefault();
     e.returnValue = "";
   }
@@ -1361,8 +1367,18 @@ function planningPanel(p, shared) {
   root.append(node("p", "Share a draft to discuss it, then accept the exact saved revision when ready. CLI and Room use the same approvals and evidence. Shared text is visible to your team; keep credentials and private transcripts out of it.", "meta"));
   if (shared.revision) root.append(node("h4", "Latest requested revision"),
     node("p", `${shared.revision.actor} requested ${shared.revision.to} changes at v${shared.revision.version}: ${shared.revision.note}`, "prose"));
+  root.append(node("p", "Next: " + shared.next_step, "notice"));
+  if (shared.story_baseline) root.append(storySummary(shared.story_baseline));
+  if (shared.story_baseline) root.append(sourceReviewPanel(p, shared));
   const stage = shared.stage;
   const stages = ["context", "definition", "specification", "planning"];
+  const journey = node("ol", undefined, "workflow-steps");
+  for (const name of stages) {
+    const item = node("li", name === stage ? name + " · current" : name);
+    if (name === stage) item.setAttribute("aria-current", "step");
+    journey.append(item);
+  }
+  root.append(journey);
   for (const name of stages) {
     const draft = shared.drafts[name];
     if (!draft || name === stage) continue;
@@ -1378,7 +1394,8 @@ function planningPanel(p, shared) {
     root.append(node("p", stage === "development" ? "Planning accepted. Use Execution to start the registered lots; the CLI can start them too." : "Planning is complete for this run."));
   } else {
     const draft = shared.drafts[stage];
-    const values = draft?.fields || {};
+    const values = draft?.fields || shared.suggestions?.[stage] || {};
+    if (!draft && shared.suggestions?.[stage]) root.append(node("p", "Starting text from the recorded story. Review and edit it; linked context still needs collection or an explanation of why it is unavailable.", "meta"));
     root.append(node("h4", "Review " + stage), node("p", `Workflow v${shared.version} · ${draft ? "Draft " + draft.draft_version + " shared by " + draft.shared_by + (draft.current ? " · current" : " · needs review and re-sharing") : "No draft shared yet"}`, "meta"));
     if (stage === "planning") {
       const preview = shared.plan_preview;
@@ -1484,4 +1501,150 @@ function planningPanel(p, shared) {
     root.append(node("h4","Request a revision"),revise);
   }
   return root;
+}
+
+function storySummary(baseline) {
+  const details = node("details"); details.open = !baseline.recorded_by;
+  details.append(node("summary", (baseline.recorded_by ? "Recorded story · " : "Story preview · ") + baseline.story.key));
+  const s = baseline.story;
+  for (const [label, value] of [
+    ["Title", s.title], ["Captain at intake", s.captain],
+    ["Source", s.source_ref], ["Source revision", s.source_revision],
+    ["Requirements", s.requirements], ["Scope", s.scope],
+    ["Outcomes", s.outcomes.join("\n")], ["Context references", s.context_refs.join("\n") || "None supplied"],
+    ["Estimate", s.estimate || "Not supplied"],
+  ]) details.append(node("h4", label), node("p", value, "prose"));
+  details.append(node("p", (baseline.provenance === "configured_source" ? "Configured source observed " + baseline.observed_at + " · " : "Engineer-supplied snapshot · ") + (baseline.recorded_by ? "recorded by " + baseline.recorded_by + " · " : "") +
+    "SHA-256 " + baseline.sha256 + (baseline.provenance === "configured_source" ? ". Snapshot from the adapter; later source changes require refresh." : ". Source freshness has not been independently checked."), "meta"));
+  return details;
+}
+
+function intakeForm() {
+  const details = node("details");
+  details.append(node("summary", "Start a story"));
+  const form = node("form", undefined, "composer");
+  form.append(node("p", "Capture the Jira story and relevant Layline context. Preview what the team will see before creating a guided workflow. This does not change Jira, approve requirements, create worktrees, or launch an agent.", "meta wide"));
+  const inputs = {};
+  for (const [key, label] of [
+    ["key", "Ticket key"], ["title", "Story title"], ["captain", "Responsible engineer"],
+    ["source_ref", "Jira or source reference"], ["source_revision", "Source version / updated time (or explain if unknown)"],
+    ["requirements", "Business requirements"], ["outcomes", "Expected outcomes / acceptance criteria — one per line"],
+    ["scope", "Scope and boundaries"], ["context_refs", "Layline / architecture / other context references — one per line"],
+    ["estimate", "Story estimate (optional; include unit)"],
+  ]) {
+    const input = key === "captain" ? select(members.filter(m => m.role !== "viewer").map(m => [m.name,m.name]), member.name) : node("textarea");
+    if (key !== "captain") { input.rows = ["requirements","outcomes","scope"].includes(key) ? 4 : 2; input.maxLength = 16000; }
+    input.required = !["context_refs", "estimate"].includes(key);
+    inputs[key] = input;
+    const labelNode = field(label, input); labelNode.className = "wide"; form.append(labelNode);
+  }
+  let editRevision = crypto.randomUUID();
+  const fetchSource = button("Import from source", async () => {
+    fetchSource.disabled = true;
+    await send("workspace", {action:"story_fetch", anchor:inputs.key.value.trim(), captain:inputs.captain.value, editor_revision:editRevision});
+    fetchSource.disabled = !connected;
+  }, "secondary");
+  form.append(fetchSource, node("p", "Import needs only a ticket key and responsible engineer. The server must have a read-only source adapter configured. Imported content is previewed before creation; editing it switches to an engineer-supplied snapshot.", "meta wide"));
+  const shown = node("div", undefined, "wide");
+  const preview = node("button", "Preview story"); preview.type = "submit";
+  let reviewed = null;
+  const readStory = () => Object.fromEntries(Object.entries(inputs).map(([key,input]) => [key,
+    ["outcomes","context_refs"].includes(key) ? input.value.split("\n").map(v=>v.trim()).filter(Boolean) : input.value]));
+  const start = button("Create guided workflow", async () => {
+    start.disabled = true;
+    await send("workspace", {action:"story_start", preview_key:reviewed.key, sha256:reviewed.sha256});
+    start.disabled = !connected || !reviewed;
+  }); start.disabled = true;
+  const controls = node("div", undefined, "button-group wide");
+  controls.append(button("Expand fields", () => form.querySelectorAll("textarea").forEach(i => i.classList.toggle("expanded")), "secondary"), preview, start);
+  form.append(controls, shown);
+  form.addEventListener("input", () => {
+    editRevision = crypto.randomUUID();
+    form.dataset.dirty = "true"; reviewed = null; start.disabled = true; shown.replaceChildren();
+  });
+  form.addEventListener("commandconfirmed", e => {
+    if (e.detail.path !== "workspace") return;
+    if (e.detail.body.action === "story_fetch") {
+      if (e.detail.body.editor_revision !== editRevision) {
+        shown.replaceChildren(node("p", "The editor changed during import. Import again to replace those edits."));
+        return;
+      }
+      reviewed = {...e.detail.result, key:e.detail.body.key};
+      for (const [key,input] of Object.entries(inputs)) input.value = Array.isArray(reviewed.story[key]) ? reviewed.story[key].join("\n") : reviewed.story[key];
+      form.dataset.dirty = "true";
+      shown.replaceChildren(storySummary(reviewed)); start.disabled = false;
+    } else if (e.detail.body.action === "story_preview") {
+      if (JSON.stringify(e.detail.body.story) !== JSON.stringify(readStory())) {
+        reviewed = null; start.disabled = true;
+        shown.replaceChildren(node("p", "The story changed while the preview was pending. Preview the updated story."));
+        return;
+      }
+      reviewed = {...e.detail.result, key:e.detail.body.key};
+      shown.replaceChildren(storySummary(reviewed)); start.disabled = false;
+      // A preview is still an uncommitted draft; retain navigation protection.
+    } else if (e.detail.body.action === "story_start") {
+      delete form.dataset.dirty; reviewed = null; form.reset(); shown.replaceChildren();
+      start.disabled = true; details.open = false;
+      roomId = e.detail.result.plat; roomTab = "planning"; urlState();
+    }
+  });
+  form.onsubmit = async e => {
+    e.preventDefault(); preview.disabled = true; start.disabled = true;
+    await send("workspace", {action:"story_preview", story:readStory()});
+    preview.disabled = !connected;
+  };
+  details.append(form); return details;
+}
+
+function sourceReviewPanel(p, shared) {
+  const root = node("section");
+  const review = shared.source_review;
+  root.append(node("h4", "Source changes and requirement decisions"));
+  root.append(node("p", "Observations and decisions below do not replace the original story, approve a proposal, or change executable scope. Use Request changes to revise unstarted work; started scope requires a new plat. A new customer capability needs its own story and estimate.", "meta"));
+  const observation = review?.observation;
+  if (observation) {
+    root.append(node("p", "Last source observation: " + observation.observed_at + " · " + observation.recorded_by));
+    const differences = Object.entries(observation.changes);
+    root.append(differences.length ? table(["Field", "Original baseline", "Observed source"], differences.map(([key,value]) =>
+      [key, Array.isArray(value.before) ? value.before.join("\n") : value.before, Array.isArray(value.after) ? value.after.join("\n") : value.after])) : node("p", "No changes from the recorded story at that observation."));
+  } else root.append(node("p", "Source has not been refreshed."));
+  if (member.role !== "viewer" && p.status !== "closed") {
+    root.append(button("Refresh source", async () => {
+      await send("workspace", {action:"story_refresh", plat:p.id, version:shared.version});
+    }, "secondary"));
+  }
+  for (const change of review?.changes || []) {
+    const detail = node("details");
+    detail.append(node("summary", `${change.disposition.replaceAll("_"," ")} · ${change.recorded_by} · ${change.recorded_at}`));
+    for (const key of ["before","after","reason","source","participants","impact","layline_followup"])
+      if (change[key]) detail.append(node("h4",key.replaceAll("_"," ")),node("p",change[key],"prose"));
+    detail.append(node("p", "Recorded only · workflow v" + change.workflow_version + ". Review affected artifacts separately.", "meta"));
+    root.append(detail);
+  }
+  if (member.role === "viewer" || p.status === "closed") return root;
+  const detail = node("details"); detail.dataset.preserve = "true"; detail.append(node("summary","Record a requirement change"));
+  const form = node("form",undefined,"composer");
+  const disposition = select([["proposed","Proposal — not decided"],["decided","Decision already made"],["engineering_detail","Engineering detail within existing outcomes"]],"proposed");
+  form.append(field("Decision status",disposition));
+  const inputs = {};
+  for (const [key,label] of [["before","Previous requirement"],["after","Changed or proposed requirement"],
+    ["reason","Why"],["source","Decision source — link or conversation note"],["participants","People involved (if applicable)"],
+    ["impact","Affected specification, plan, tests, documentation and delivery evidence"],["layline_followup","Optional Layline follow-up"]]) {
+    const input=node("textarea"); input.rows=3; input.required=!["participants","layline_followup"].includes(key);
+    inputs[key]=input; const f=field(label,input); f.className="wide"; form.append(f);
+  }
+  const save=node("button","Record change"); save.type="submit";
+  const controls=node("div",undefined,"button-group wide");
+  controls.append(button("Expand fields",()=>form.querySelectorAll("textarea").forEach(i=>i.classList.toggle("expanded")),"secondary"),save); form.append(controls);
+  form.addEventListener("input",()=>{form.dataset.dirty="true";});
+  form.addEventListener("commandconfirmed",e=>{
+    if(e.detail.body.action==="requirement_change") { delete form.dataset.dirty; detail.open=false; }
+  });
+  form.onsubmit=async e=>{
+    e.preventDefault(); save.disabled=true;
+    await send("workspace",{action:"requirement_change",plat:p.id,version:shared.version,ledger_version:review.ledger_version,
+      fields:{disposition:disposition.value,...Object.fromEntries(Object.entries(inputs).map(([k,i])=>[k,i.value]))}});
+    save.disabled=!connected;
+  };
+  detail.append(form); root.append(detail); return root;
 }

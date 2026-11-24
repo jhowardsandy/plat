@@ -90,6 +90,9 @@ on       = ["blocked", "delivered", "budget"]
 # -- which is how an invented anchor once collided with someone else's live work.
 # [tracker]
 # cmd = "my-ticket-lookup {anchor}"
+# Optional read-only rich-story adapter for Room and CLI intake (no shell):
+# story_argv = ["/absolute/path/to/story-adapter", "{anchor}"]
+# Outputs the intake story fields documented in docs/WORKFLOW.md.
 '''
 
 

@@ -47,7 +47,43 @@ def command(db, member, request):
             raise Conflict('idempotency key was already used for another command')
         return prior.result
     action = request.get('action')
-    if action in ('workflow_share', 'workflow_accept', 'workflow_revise'):
+    if action in ('story_preview', 'story_fetch', 'story_start'):
+        from . import intake, story_sources
+        from .config import load
+        if not member.active or member.role not in ('engineer', 'admin'):
+            raise Forbidden('an active engineer or administrator is required')
+        if action == 'story_preview':
+            result = intake.preview(request.get('story'))
+        elif action == 'story_fetch':
+            result = story_sources.fetch(load(), request.get('anchor'), request.get('captain'))
+        else:
+            preview_key = request.get('preview_key')
+            if not isinstance(preview_key, str):
+                raise ValueError('review a story preview first')
+            receipt = db.get(CommandReceipt, preview_key)
+            if not receipt or receipt.actor != member.name or receipt.result.get('provenance') not in ('engineer_supplied', 'configured_source'):
+                raise ValueError('review your own story preview first')
+            story = receipt.result['story']
+            captain = db.scalars(select(TeamMember).where(TeamMember.name == story['captain'], TeamMember.active.is_(True),
+                TeamMember.role.in_(('engineer', 'admin')))).first()
+            if not captain:
+                raise ValueError('captain must be an active engineer or administrator')
+            result = intake.start(db, load(), story, request.get('sha256'), who=member.name,
+                                  source=receipt.result if receipt.result['provenance'] == 'configured_source' else None)
+    elif action in ('story_refresh', 'requirement_change'):
+        from . import story_sources
+        from .config import load
+        if not member.active or member.role not in ('engineer', 'admin'):
+            raise Forbidden('an active engineer or administrator is required')
+        p = db.scalars(select(Plat).where(Plat.public_id == request.get('plat'))).first()
+        if not p:
+            raise ValueError('plat not found')
+        if action == 'story_refresh':
+            result = story_sources.observe(db, load(), p, request.get('version'), who=member.name)
+        else:
+            result = story_sources.record_change(db, p, request.get('fields'), request.get('version'),
+                request.get('ledger_version'), who=member.name)
+    elif action in ('workflow_share', 'workflow_accept', 'workflow_revise'):
         from . import guidance, planning
         if not member.active or member.role not in ('engineer', 'admin'):
             raise Forbidden('an active engineer or administrator is required')

@@ -79,7 +79,7 @@ def revisions(db, plat):
     return out
 
 
-def begin(db, plat, owner, *, guided=False):
+def begin(db, plat, owner, *, guided=False, who=None):
     if db.get(Workflow, plat.id):
         raise WorkflowError('workflow already exists')
     if plat.status != 'planned':
@@ -88,7 +88,7 @@ def begin(db, plat, owner, *, guided=False):
         raise WorkflowError('a responsible owner is required')
     w = Workflow(plat_id=plat.id, owner=owner, stage='context', version=0,
                  requirements={'process': 'guided-v1'} if guided else {})
-    record(db, plat_id=plat.id, actor='human', actor_detail=actor(), kind='workflow',
+    record(db, plat_id=plat.id, actor='human', actor_detail=who or actor(), kind='workflow',
            decision='full lifecycle enabled', inputs={'owner': owner, 'process': 'guided-v1' if guided else 'classic'}, apply=lambda: db.add(w))
     return w
 
